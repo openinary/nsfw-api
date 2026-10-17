@@ -1,22 +1,22 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import { createApp } from "../src/app.js";
-import { createClassifier, ImageDecodeError } from "../src/classifier.js";
-import { CLASSES } from "../src/config.js";
-import { makeImage, multipart, testConfig } from "./helpers.js";
+import { createApp } from "../src/app.ts";
+import { createClassifier, ImageDecodeError } from "../src/classifier.ts";
+import { CLASSES } from "../src/config.ts";
+import { makeImage, multipart, testConfig, type ImageFormat } from "./helpers.ts";
 
 // End-to-end through nsfwjs's MobileNetV2 converted to ONNX (needs `npm run prepare-models`).
-let classifier;
-let app;
+let classifier: Awaited<ReturnType<typeof createClassifier>>;
+let app: ReturnType<typeof createApp>;
 
 beforeAll(async () => {
   classifier = await createClassifier();
   app = createApp({ config: testConfig(), getClassifier: () => classifier });
 }, 60_000);
 
-const sum = (o) => Object.values(o).reduce((a, b) => a + b, 0);
+const sum = (o: Record<string, number>) => Object.values(o).reduce((a, b) => a + b, 0);
 
 describe(`real model (MobileNetV2)`, () => {
-  it.each([
+  it.each<[ImageFormat, object]>([
     ["jpeg", {}],
     ["png", {}],
     ["png", { alpha: true }],
@@ -39,7 +39,7 @@ describe(`real model (MobileNetV2)`, () => {
 
   // Reference scores from nsfwjs 4.4.0 itself (TensorFlow.js) on the same images:
   // the ONNX conversion must not move them.
-  it.each([
+  it.each<[ImageFormat, object, Record<string, number>]>([
     ["jpeg", {}, { Drawing: 0.903305, Hentai: 0.017312, Neutral: 0.075418, Porn: 0.003189, Sexy: 0.000777 }],
     ["png", { alpha: true }, { Drawing: 0.784016, Hentai: 0.012766, Neutral: 0.198689, Porn: 0.00366, Sexy: 0.000868 }],
   ])("matches nsfwjs's own scores on %s %o", async (format, opts, expected) => {
@@ -56,7 +56,7 @@ describe(`real model (MobileNetV2)`, () => {
   it("serves a full HTTP round trip", async () => {
     const res = await app.request("/classify", { method: "POST", body: multipart(await makeImage("webp")) });
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body: any = await res.json();
     expect(body.model).toBe("MobileNetV2");
     expect(typeof body.nsfw).toBe("boolean");
     expect(body.score).toBeGreaterThanOrEqual(0);
@@ -71,8 +71,10 @@ describe(`real model (MobileNetV2)`, () => {
 
   it("threshold 0 flags and threshold 1 clears the same image", async () => {
     const img = await makeImage();
-    const at = async (t) =>
-      (await (await app.request(`/classify?threshold=${t}`, { method: "POST", body: multipart(img) })).json()).nsfw;
+    const at = async (t: number) => {
+      const body: any = await (await app.request(`/classify?threshold=${t}`, { method: "POST", body: multipart(img) })).json();
+      return body.nsfw;
+    };
     expect(await at(0)).toBe(true);
     expect(await at(1)).toBe(false);
   });

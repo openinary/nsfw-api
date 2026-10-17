@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createLimiter, QueueFullError } from "../src/limiter.js";
+import { createLimiter, QueueFullError } from "../src/limiter.ts";
 
 const tick = () => new Promise((r) => setTimeout(r, 5));
 

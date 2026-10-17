@@ -1,17 +1,36 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import sharp from "sharp";
-import { ImageDecodeError } from "./classifier.js";
-import { createSession, loadOrt } from "./ort.js";
+import { ImageDecodeError } from "./classifier.ts";
+import { createSession, loadOrt, type SessionOptions } from "./ort.ts";
 
 // MobileCLIP-S0 preprocessing: shortest edge to 256 (bilinear), centre crop,
 // pixels scaled to 0..1 with no mean/std normalisation.
-const MODEL = "Xenova/mobileclip_s0"; // must match scripts/prepare-clip.js
+const MODEL = "Xenova/mobileclip_s0"; // must match scripts/prepare-clip.ts
 const SIZE = 256;
 const LOGIT_SCALE = 100; // MobileCLIP's learned temperature
 
-async function pixels(buffer) {
-  let data;
+export interface CategoryScore {
+  score: number;
+  /** The category's prompt CLIP matched best. */
+  match: string | null;
+}
+
+export interface ClipClassifier {
+  classify(buffer: Buffer): Promise<Record<string, CategoryScore>>;
+}
+
+/** models/clip/prompts.json, written by scripts/prepare-clip.ts. */
+export interface PromptsFile {
+  model: string;
+  revision: string;
+  variant: string;
+  dim: number;
+  prompts: { category: string; text: string; embedding: number[] }[];
+}
+
+async function pixels(buffer: Buffer) {
+  let data: Buffer;
   try {
     ({ data } = await sharp(buffer, { failOn: "error", limitInputPixels: 100_000_000 })
       .rotate()
@@ -32,12 +51,9 @@ async function pixels(buffer) {
 }
 
 /**
- * @param {object} opts
- * @param {string[]} opts.categories  enabled categories (subset of prompts.json)
- * @param {string} [opts.modelDir]
- * @param {number} [opts.threads]
- * @param {string} [opts.modelFile]  vision model file inside modelDir
- * @param {object} [opts.sessionOptions]  extra ONNX Runtime session options
+ * @param opts.categories  enabled categories (subset of prompts.json)
+ * @param opts.modelFile  vision model file inside modelDir
+ * @param opts.sessionOptions  extra ONNX Runtime session options
  */
 export async function createClipClassifier({
   categories,
@@ -45,9 +61,17 @@ export async function createClipClassifier({
   threads = 1,
   modelFile = "vision.onnx",
   sessionOptions = {},
+}: {
+  categories: string[];
+  modelDir?: string;
+  threads?: number;
+  modelFile?: string;
+  sessionOptions?: SessionOptions;
 }) {
   const ort = await loadOrt();
-  const { model, prompts, dim, variant } = JSON.parse(readFileSync(path.join(modelDir, "prompts.json"), "utf8"));
+  const { model, prompts, dim, variant }: PromptsFile = JSON.parse(
+    readFileSync(path.join(modelDir, "prompts.json"), "utf8"),
+  );
   if (model !== MODEL) {
     throw new Error(`${modelDir}/prompts.json was made for ${model}, not ${MODEL}: run "npm run prepare-models" again`);
   }
@@ -63,10 +87,10 @@ export async function createClipClassifier({
 
   const session = await createSession(path.join(modelDir, modelFile), { threads, ...sessionOptions });
 
-  async function classify(buffer) {
+  async function classify(buffer: Buffer): Promise<Record<string, CategoryScore>> {
     const input = new ort.Tensor("float32", await pixels(buffer), [1, 3, SIZE, SIZE]);
     const { image_embeds } = await session.run({ pixel_values: input });
-    const img = image_embeds.data;
+    const img = image_embeds.data as Float32Array;
     const norm = Math.hypot(...img);
 
     const logits = new Float32Array(active.length);
@@ -80,8 +104,8 @@ export async function createClipClassifier({
     let total = 0;
     for (let i = 0; i < logits.length; i++) total += logits[i] = Math.exp(logits[i] - max);
 
-    const scores = Object.fromEntries(categories.map((c) => [c, 0]));
-    const best = {};
+    const scores: Record<string, number> = Object.fromEntries(categories.map((c) => [c, 0]));
+    const best: Record<string, { p: number; text: string }> = {};
     for (let i = 0; i < active.length; i++) {
       const { category, text } = active[i];
       if (category === "other") continue;

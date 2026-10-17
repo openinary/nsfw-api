@@ -1,32 +1,36 @@
 import { readFileSync } from "node:fs";
 import { timingSafeEqual } from "node:crypto";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
-import { ImageDecodeError } from "./classifier.js";
-import { createLimiter, QueueFullError } from "./limiter.js";
+import { ImageDecodeError, type Classifier, type Predictions } from "./classifier.ts";
+import type { CategoryScore, ClipClassifier } from "./clip.ts";
+import type { Config } from "./config.ts";
+import { createLimiter, QueueFullError } from "./limiter.ts";
 
 const playgroundHtml = readFileSync(new URL("./playground.html", import.meta.url), "utf8");
 
-function safeEqual(a, b) {
+function safeEqual(a: string, b: string) {
   const x = Buffer.from(a);
   const y = Buffer.from(b);
   return x.length === y.length && timingSafeEqual(x, y);
 }
 
-/**
- * @param {object} opts
- * @param {ReturnType<import("./config.js").loadConfig>} opts.config
- * @param {() => ({ classify: (buf: Buffer) => Promise<Record<string, number>>, name: string } | null)} opts.getClassifier
- *   Returns null while the model is still loading.
- * @param {() => ({ classify: (buf: Buffer) => Promise<Record<string, { score: number, match: string | null }>> } | null)} [opts.getClip]
- *   The optional CLIP categories classifier; null when disabled.
- * @param {() => Promise<unknown>} [opts.whenReady]
- *   Resolves once the models are loaded; /classify waits on it (up to readyTimeoutMs)
- *   instead of failing, so a request that wakes a sleeping service still gets an answer.
- * @param {number} [opts.readyTimeoutMs]
- */
-export function createApp({ config, getClassifier, getClip = () => null, whenReady, readyTimeoutMs = 60_000 }) {
+export interface AppOptions {
+  config: Config;
+  /** Returns null while the model is still loading. */
+  getClassifier: () => Classifier | null;
+  /** The optional CLIP categories classifier; null when disabled. */
+  getClip?: () => ClipClassifier | null;
+  /**
+   * Resolves once the models are loaded; /classify waits on it (up to readyTimeoutMs)
+   * instead of failing, so a request that wakes a sleeping service still gets an answer.
+   */
+  whenReady?: () => Promise<unknown>;
+  readyTimeoutMs?: number;
+}
+
+export function createApp({ config, getClassifier, getClip = () => null, whenReady, readyTimeoutMs = 60_000 }: AppOptions) {
   const app = new Hono();
   const limiter = createLimiter({ concurrency: config.maxConcurrency, maxQueue: config.maxQueue });
 
@@ -46,7 +50,7 @@ export function createApp({ config, getClassifier, getClip = () => null, whenRea
   }
 
   // "/" is the healthcheck; "/health" stays as an explicit alias (railway.json uses it).
-  const health = (c) => {
+  const health = (c: Context) => {
     const classifier = getClassifier();
     if (!classifier) return c.json({ status: "loading" }, 503);
     return c.json({
@@ -79,7 +83,7 @@ export function createApp({ config, getClassifier, getClip = () => null, whenRea
     }),
     async (c) => {
       if (!getClassifier() && whenReady) {
-        let timer;
+        let timer: NodeJS.Timeout | undefined;
         const timeout = new Promise((resolve) => (timer = setTimeout(resolve, readyTimeoutMs)));
         await Promise.race([whenReady(), timeout]).finally(() => clearTimeout(timer));
       }
@@ -105,7 +109,7 @@ export function createApp({ config, getClassifier, getClip = () => null, whenRea
 
       const started = performance.now();
       const clip = getClip();
-      let predictions, categories;
+      let predictions: Predictions, categories: Record<string, CategoryScore> | null;
       try {
         // Both models run on ONNX Runtime's native threads: run them side by side.
         [predictions, categories] = await limiter.run(() =>
@@ -124,11 +128,12 @@ export function createApp({ config, getClassifier, getClip = () => null, whenRea
       const [topClass, topProbability] = Object.entries(predictions).sort((a, b) => b[1] - a[1])[0];
       const nsfw = score > threshold;
       const flags = nsfw ? ["nsfw"] : [];
+      let flagged: Record<string, CategoryScore & { flagged: boolean }> | undefined;
       if (categories) {
-        for (const [name, c] of Object.entries(categories)) {
-          c.flagged = c.score > config.clipThreshold;
-          c.score = round(c.score);
-          if (c.flagged) flags.push(name);
+        flagged = {};
+        for (const [name, { score, match }] of Object.entries(categories)) {
+          flagged[name] = { score: round(score), match, flagged: score > config.clipThreshold };
+          if (flagged[name].flagged) flags.push(name);
         }
       }
 
@@ -140,7 +145,7 @@ export function createApp({ config, getClassifier, getClip = () => null, whenRea
         threshold,
         top: { className: topClass, probability: round(topProbability) },
         predictions: Object.fromEntries(Object.entries(predictions).map(([k, v]) => [k, round(v)])),
-        ...(categories && { categories }),
+        ...(flagged && { categories: flagged }),
         model: classifier.name,
         timeMs: Math.round(performance.now() - started),
       });
@@ -150,9 +155,9 @@ export function createApp({ config, getClassifier, getClip = () => null, whenRea
   return app;
 }
 
-const round = (n) => Math.round(n * 10_000) / 10_000;
+const round = (n: number) => Math.round(n * 10_000) / 10_000;
 
-async function readImage(c) {
+async function readImage(c: Context): Promise<Buffer | null> {
   const type = c.req.header("content-type") || "";
   if (type.startsWith("multipart/form-data")) {
     const form = await c.req.formData();

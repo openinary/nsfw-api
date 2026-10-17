@@ -3,7 +3,7 @@
   "build": {
     "builder": "DOCKERFILE",
     "dockerfilePath": "Dockerfile",
-    "watchPatterns": ["src/**", "scripts/prepare-*.js", "package.json", "package-lock.json", "Dockerfile"]
+    "watchPatterns": ["src/**", "scripts/prepare-*.ts", "build.ts", "package.json", "package-lock.json", "Dockerfile"]
   },
   "deploy": {
     "healthcheckPath": "/health",

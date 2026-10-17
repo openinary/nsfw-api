@@ -2,8 +2,8 @@
 // text prompts; an image's score for a category is the share of probability
 // CLIP gives to that category's prompts, against every enabled category and the
 // OTHER prompts below. Editing this file requires a rebuild (prompts are turned
-// into embeddings at build time by scripts/prepare-clip.js).
-export const CATEGORIES = {
+// into embeddings at build time by scripts/prepare-clip.ts).
+export const CATEGORIES: Record<string, string[]> = {
   weapon: [
     "a photo of a gun",
     "a photo of a handgun",
@@ -34,7 +34,7 @@ export const CATEGORIES = {
 // "people and bodies" prompts, suggestive photos scored up to 39% gore and 27%
 // drugs ("a dead body", "a person smoking a joint" were their nearest match).
 // Nudity itself is nsfwjs's job, so it belongs here too.
-export const OTHER = [
+export const OTHER: string[] = [
   "a photo",
   "a photo of people",
   "a selfie",

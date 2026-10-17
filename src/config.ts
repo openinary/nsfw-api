@@ -1,6 +1,9 @@
-export const CLASSES = ["Drawing", "Hentai", "Neutral", "Porn", "Sexy"];
+export const CLASSES = ["Drawing", "Hentai", "Neutral", "Porn", "Sexy"] as const;
+export type ClassName = (typeof CLASSES)[number];
 
-function number(env, name, fallback, { min = -Infinity, max = Infinity } = {}) {
+type Env = Record<string, string | undefined>;
+
+function number(env: Env, name: string, fallback: number, { min = -Infinity, max = Infinity } = {}): number {
   const raw = env[name];
   if (raw === undefined || raw === "") return fallback;
   const value = Number(raw);
@@ -10,16 +13,19 @@ function number(env, name, fallback, { min = -Infinity, max = Infinity } = {}) {
   return value;
 }
 
-export function loadConfig(env = process.env) {
+const isClass = (name: string): name is ClassName => (CLASSES as readonly string[]).includes(name);
+
+export function loadConfig(env: Env = process.env) {
   const nsfwClasses = (env.NSFW_CLASSES || "Porn,Hentai,Sexy")
     .split(",")
     .map((s) => s.trim())
-    .filter(Boolean);
-  for (const name of nsfwClasses) {
-    if (!CLASSES.includes(name)) {
-      throw new Error(`NSFW_CLASSES contains unknown class "${name}" (allowed: ${CLASSES.join(", ")})`);
-    }
-  }
+    .filter(Boolean)
+    .map((name) => {
+      if (!isClass(name)) {
+        throw new Error(`NSFW_CLASSES contains unknown class "${name}" (allowed: ${CLASSES.join(", ")})`);
+      }
+      return name;
+    });
 
   const clipCategories = (env.CLIP_CATEGORIES ?? "weapon,gore,drugs")
     .split(",")
@@ -41,3 +47,5 @@ export function loadConfig(env = process.env) {
     corsOrigin: env.CORS_ORIGIN || "",
   };
 }
+
+export type Config = ReturnType<typeof loadConfig>;

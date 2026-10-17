@@ -4,10 +4,16 @@ export class QueueFullError extends Error {
   }
 }
 
+export interface Limiter {
+  readonly active: number;
+  readonly queued: number;
+  run<T>(fn: () => Promise<T>): Promise<T>;
+}
+
 // Caps how many inferences run at once and how many may wait behind them.
-export function createLimiter({ concurrency, maxQueue }) {
+export function createLimiter({ concurrency, maxQueue }: { concurrency: number; maxQueue: number }): Limiter {
   let active = 0;
-  const waiting = [];
+  const waiting: (() => void)[] = [];
 
   const next = () => {
     active--;
@@ -28,7 +34,7 @@ export function createLimiter({ concurrency, maxQueue }) {
     async run(fn) {
       if (active >= concurrency) {
         if (waiting.length >= maxQueue) throw new QueueFullError();
-        await new Promise((resolve) => waiting.push(resolve));
+        await new Promise<void>((resolve) => waiting.push(resolve));
       } else {
         active++;
       }

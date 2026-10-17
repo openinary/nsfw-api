@@ -6,7 +6,7 @@ import { build } from "esbuild";
 await rm("dist", { recursive: true, force: true });
 
 await build({
-  entryPoints: ["src/server.js"],
+  entryPoints: ["src/server.ts"],
   outdir: "dist",
   bundle: true,
   format: "esm",

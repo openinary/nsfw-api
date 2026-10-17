@@ -1,15 +1,15 @@
 import { serve } from "@hono/node-server";
-import { createApp } from "./app.js";
-import { createClassifier } from "./classifier.js";
-import { createClipClassifier } from "./clip.js";
-import { loadConfig } from "./config.js";
+import { createApp } from "./app.ts";
+import { createClassifier } from "./classifier.ts";
+import { createClipClassifier } from "./clip.ts";
+import { loadConfig } from "./config.ts";
 
 const config = loadConfig();
 
-let classifier = null;
-let clip = null;
-let markReady;
-const ready = new Promise((resolve) => (markReady = resolve));
+let classifier: Awaited<ReturnType<typeof createClassifier>> | null = null;
+let clip: Awaited<ReturnType<typeof createClipClassifier>> | null = null;
+let markReady!: () => void;
+const ready = new Promise<void>((resolve) => (markReady = resolve));
 
 const app = createApp({ config, getClassifier: () => classifier, getClip: () => clip, whenReady: () => ready });
 
@@ -39,7 +39,7 @@ try {
   process.exit(1);
 }
 
-function shutdown(signal) {
+function shutdown(signal: NodeJS.Signals) {
   console.log(`[server] ${signal} received, closing`);
   server.close(() => {
     classifier?.dispose();

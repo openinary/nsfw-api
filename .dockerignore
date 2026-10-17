@@ -6,4 +6,4 @@ test
 *.md
 .env
 *.log
-vitest.config.js
+vitest.config.ts

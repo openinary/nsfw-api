@@ -8,17 +8,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends binutils && rm 
  && strip /usr/local/bin/node
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
-COPY build.js ./
+COPY build.ts ./
 COPY src ./src
-COPY scripts/prepare-nsfw.js scripts/prepare-clip.js ./scripts/
+COPY scripts/prepare-nsfw.ts scripts/prepare-clip.ts ./scripts/
 # Nudity: convert nsfwjs's MobileNetV2 (installed as a dev dependency) to ONNX.
-RUN node scripts/prepare-nsfw.js
+RUN node scripts/prepare-nsfw.ts
 # Railway passes service variables as build args.
 # CLIP (MobileCLIP-S0) weights precision: fp32 (default, 46 MB) or fp16 (23 MB, ~5% slower).
 ARG CLIP_VARIANT=fp32
 # CLIP: download the vision model and embed the category prompts (needs network at build time).
-RUN node scripts/prepare-clip.js && rm -rf models/.cache
-RUN node build.js \
+RUN node scripts/prepare-clip.ts && rm -rf models/.cache
+RUN node build.ts \
  && npm prune --omit=dev \
  # Keep only this platform's native binaries.
  && find node_modules/@img -mindepth 1 -maxdepth 1 \( -name "*-linuxmusl-*" -o -name "*-wasm32" \) -exec rm -rf {} + \

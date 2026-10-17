@@ -1,16 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { createApp } from "../src/app.js";
-import { ImageDecodeError } from "../src/classifier.js";
-import { makeImage, multipart, testConfig } from "./helpers.js";
+import { createApp } from "../src/app.ts";
+import { ImageDecodeError, type Classifier, type Predictions } from "../src/classifier.ts";
+import type { ClipClassifier } from "../src/clip.ts";
+import type { Config } from "../src/config.ts";
+import { makeImage, multipart, testConfig } from "./helpers.ts";
 
 // HTTP behaviour with a stub classifier: fast, no model involved.
-const scores = { Drawing: 0.05, Hentai: 0.05, Neutral: 0.6, Porn: 0.2, Sexy: 0.1 };
+const scores: Predictions = { Drawing: 0.05, Hentai: 0.05, Neutral: 0.6, Porn: 0.2, Sexy: 0.1 };
 
-function stub(classify = async () => scores) {
+function stub(classify: Classifier["classify"] = async () => scores): Classifier {
   return { name: "Stub", classify };
 }
 
-function appWith(config = {}, classifier = stub(), clip = null) {
+function appWith(config: Partial<Config> = {}, classifier = stub(), clip: ClipClassifier | null = null) {
   return createApp({
     config: testConfig(config),
     getClassifier: () => classifier,
@@ -18,12 +20,16 @@ function appWith(config = {}, classifier = stub(), clip = null) {
   });
 }
 
-const clipStub = (scores) => ({
+const clipStub = (scores: Record<string, number>): ClipClassifier => ({
   classify: async () =>
     Object.fromEntries(Object.entries(scores).map(([k, score]) => [k, { score, match: `a photo of ${k}` }])),
 });
 
-const post = (app, body, { headers = {}, query = "" } = {}) =>
+const post = (
+  app: ReturnType<typeof createApp>,
+  body: RequestInit["body"],
+  { headers = {}, query = "" }: { headers?: Record<string, string>; query?: string } = {},
+) =>
   app.request(`/classify${query}`, { method: "POST", body, headers });
 
 describe("GET /health", () => {
@@ -79,7 +85,7 @@ describe("POST /classify", () => {
   it("accepts multipart uploads and computes the verdict", async () => {
     const res = await post(appWith(), multipart(await makeImage()));
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body: any = await res.json();
     // default NSFW classes are Porn + Hentai + Sexy = 0.35, below 0.7
     expect(body).toMatchObject({ nsfw: false, score: 0.35, threshold: 0.7, model: "Stub" });
     expect(body.top).toEqual({ className: "Neutral", probability: 0.6 });
@@ -134,9 +140,9 @@ describe("POST /classify", () => {
   });
 
   it("waits for the models instead of failing when they are about to be ready", async () => {
-    let classifier = null;
-    let markReady;
-    const ready = new Promise((r) => (markReady = r));
+    let classifier: Classifier | null = null;
+    let markReady!: () => void;
+    const ready = new Promise<void>((r) => (markReady = r));
     const app = createApp({ config: testConfig(), getClassifier: () => classifier, whenReady: () => ready });
     const pending = post(app, multipart(await makeImage()));
     setTimeout(() => {
@@ -157,8 +163,8 @@ describe("POST /classify", () => {
   });
 
   it("returns 429 when the queue is full", async () => {
-    let release;
-    const gate = new Promise((r) => (release = r));
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
     const app = appWith({ maxConcurrency: 1, maxQueue: 0 }, stub(async () => (await gate, scores)));
     const img = await makeImage();
     const first = post(app, multipart(img));
@@ -222,7 +228,8 @@ describe("CLIP categories", () => {
 
   it("lists nsfw first when both trigger", async () => {
     const app = appWith({}, stub(async () => ({ Drawing: 0, Hentai: 0, Neutral: 0, Porn: 1, Sexy: 0 })), clipStub({ gore: 0.9 }));
-    expect((await (await post(app, multipart(await makeImage()))).json()).flags).toEqual(["nsfw", "gore"]);
+    const body: any = await (await post(app, multipart(await makeImage()))).json();
+    expect(body.flags).toEqual(["nsfw", "gore"]);
   });
 
   it("omits categories when CLIP is disabled", async () => {
@@ -232,8 +239,9 @@ describe("CLIP categories", () => {
   });
 
   it("describes CLIP in /health", async () => {
-    const on = await (await appWith({ clipCategories: ["weapon"], clipThreshold: 0.6 }, stub(), clipStub({})).request("/health")).json();
+    const on: any = await (await appWith({ clipCategories: ["weapon"], clipThreshold: 0.6 }, stub(), clipStub({})).request("/health")).json();
     expect(on.clip).toEqual({ categories: ["weapon"], threshold: 0.6 });
-    expect((await (await appWith().request("/health")).json()).clip).toBeNull();
+    const off: any = await (await appWith().request("/health")).json();
+    expect(off.clip).toBeNull();
   });
 });

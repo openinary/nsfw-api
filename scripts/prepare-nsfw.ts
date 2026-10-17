@@ -15,7 +15,7 @@ const SIZE = 224;
 
 // ---------------------------------------------------------------------------
 // Minimal protobuf writer, just enough for onnx.proto.
-const varint = (n) => {
+const varint = (n: number | bigint) => {
   const out = [];
   let v = BigInt.asUintN(64, BigInt(n)); // int64: negatives as two's complement
   do {
@@ -26,12 +26,12 @@ const varint = (n) => {
   } while (v);
   return Buffer.from(out);
 };
-const key = (field, wire) => varint((field << 3) | wire);
-const int = (field, n) => Buffer.concat([key(field, 0), varint(n)]);
-const bytes = (field, buf) => Buffer.concat([key(field, 2), varint(buf.length), buf]);
-const str = (field, s) => bytes(field, Buffer.from(s, "utf8"));
-const msg = (field, parts) => bytes(field, Buffer.concat(parts));
-const float32 = (field, f) => {
+const key = (field: number, wire: number) => varint((field << 3) | wire);
+const int = (field: number, n: number | bigint) => Buffer.concat([key(field, 0), varint(n)]);
+const bytes = (field: number, buf: Buffer) => Buffer.concat([key(field, 2), varint(buf.length), buf]);
+const str = (field: number, s: string) => bytes(field, Buffer.from(s, "utf8"));
+const msg = (field: number, parts: Buffer[]) => bytes(field, Buffer.concat(parts));
+const float32 = (field: number, f: number) => {
   const b = Buffer.alloc(4);
   b.writeFloatLE(f);
   return Buffer.concat([key(field, 5), b]);
@@ -40,16 +40,18 @@ const float32 = (field, f) => {
 const DT = { FLOAT: 1, UINT8: 2, INT64: 7, DOUBLE: 11 };
 const ATTR = { FLOAT: 1, INT: 2, INTS: 7 };
 
-const tensor = (name, dataType, dims, raw) =>
+const tensor = (name: string, dataType: number, dims: number[], raw: Buffer) =>
   Buffer.concat([...dims.map((d) => int(1, d)), int(2, dataType), str(8, name), bytes(9, raw)]);
 
-function attribute(name, value) {
+type AttrValue = number | number[];
+
+function attribute(name: string, value: AttrValue) {
   if (Array.isArray(value)) return Buffer.concat([str(1, name), ...value.map((v) => int(8, v)), int(20, ATTR.INTS)]);
   if (Number.isInteger(value)) return Buffer.concat([str(1, name), int(3, value), int(20, ATTR.INT)]);
   return Buffer.concat([str(1, name), float32(2, value), int(20, ATTR.FLOAT)]);
 }
 
-const valueInfo = (name, dims) =>
+const valueInfo = (name: string, dims: number[]) =>
   Buffer.concat([
     str(1, name),
     msg(2, [msg(1, [int(1, DT.FLOAT), msg(2, dims.map((d) => msg(1, [int(1, d)])))])]),
@@ -57,12 +59,12 @@ const valueInfo = (name, dims) =>
 
 // ---------------------------------------------------------------------------
 // Graph builder
-const nodes = [];
-const initializers = [];
+const nodes: Buffer[] = [];
+const initializers: Buffer[] = [];
 let counter = 0;
-const fresh = (hint) => `${hint}_${counter++}`;
+const fresh = (hint: string) => `${hint}_${counter++}`;
 
-function node(op, inputs, attrs = {}, name = fresh(op)) {
+function node(op: string, inputs: string[], attrs: Record<string, AttrValue> = {}, name = fresh(op)) {
   const output = name;
   nodes.push(
     Buffer.concat([
@@ -76,16 +78,16 @@ function node(op, inputs, attrs = {}, name = fresh(op)) {
   return output;
 }
 
-function constant(name, dataType, dims, raw) {
+function constant(name: string, dataType: number, dims: number[], raw: Buffer) {
   initializers.push(tensor(name, dataType, dims, raw));
   return name;
 }
-const f64 = (name, v) => {
+const f64 = (name: string, v: number) => {
   const b = Buffer.alloc(8);
   b.writeDoubleLE(v);
   return constant(name, DT.DOUBLE, [], b);
 };
-const f32 = (name, v) => {
+const f32 = (name: string, v: number) => {
   const b = Buffer.alloc(4);
   b.writeFloatLE(v);
   return constant(name, DT.FLOAT, [], b);
@@ -98,7 +100,12 @@ const { modelTopology, weightsManifest } = modelJson.default ?? modelJson;
 const shards = await Promise.all(MobileNetV2Model.weightBundles.map((load) => load()));
 const blob = Buffer.concat(shards.map((s) => Buffer.from(s.default ?? s, "base64")));
 
-const weights = new Map();
+interface Weight {
+  shape: number[];
+  q?: { dtype: string; scale?: number; min?: number };
+  data: Buffer;
+}
+const weights = new Map<string, Weight>();
 let offset = 0;
 for (const w of weightsManifest.flatMap((m) => m.weights)) {
   const count = w.shape.reduce((a, b) => a * b, 1);
@@ -112,7 +119,7 @@ for (const w of weightsManifest.flatMap((m) => m.weights)) {
 if (offset !== blob.length) throw new Error(`Weight manifest covers ${offset} bytes, shard has ${blob.length}`);
 
 // Reorders a row-major tensor (one element = `width` bytes): out[perm-applied index] = in[index].
-function transpose(data, shape, perm, width) {
+function transpose(data: Buffer, shape: number[], perm: number[], width: number) {
   const outShape = perm.map((p) => shape[p]);
   const inStrides = shape.map((_, i) => shape.slice(i + 1).reduce((a, b) => a * b, 1));
   const out = Buffer.alloc(data.length);
@@ -128,7 +135,7 @@ function transpose(data, shape, perm, width) {
 }
 
 // Emits a weight, reshaped for ONNX: quantised ones become uint8 + Cast/Mul/Add/Cast.
-function weight(name, { perm, reshape } = {}) {
+function weight(name: string, { perm, reshape }: { perm?: number[]; reshape?: number[] } = {}) {
   const w = weights.get(name);
   if (!w) throw new Error(`Missing weight ${name}`);
   weights.delete(name);
@@ -138,11 +145,11 @@ function weight(name, { perm, reshape } = {}) {
   const id = name.replace(/[^\w]/g, "_");
   if (!w.q) return constant(id, DT.FLOAT, shape, data);
   const q = constant(`${id}_q`, DT.UINT8, shape, data);
-  const scaled = node("Mul", [node("Cast", [q], { to: DT.DOUBLE }), f64(`${id}_scale`, w.q.scale)]);
-  return node("Cast", [node("Add", [scaled, f64(`${id}_min`, w.q.min)])], { to: DT.FLOAT }, id);
+  const scaled = node("Mul", [node("Cast", [q], { to: DT.DOUBLE }), f64(`${id}_scale`, w.q.scale!)]);
+  return node("Cast", [node("Add", [scaled, f64(`${id}_min`, w.q.min!)])], { to: DT.FLOAT }, id);
 }
 
-function activation(x, fn) {
+function activation(x: string, fn: string) {
   if (fn === "linear") return x;
   if (fn === "relu") return node("Relu", [x]);
   if (fn === "softmax") return node("Softmax", [x], { axis: -1 });
@@ -150,7 +157,7 @@ function activation(x, fn) {
 }
 
 // Keras "same" padding is only symmetric for stride 1 and odd kernels, the only case MobileNetV2 uses.
-function convPads(cfg, extra) {
+function convPads(cfg: LayerConfig, extra?: number[]) {
   const [kh, kw] = cfg.kernel_size;
   let pads = [0, 0, 0, 0]; // top, left, bottom, right
   if (cfg.padding === "same") {
@@ -165,9 +172,37 @@ function convPads(cfg, extra) {
 
 // ---------------------------------------------------------------------------
 // Keras layers -> ONNX (NCHW inside the graph)
-const config = modelTopology.model_config.config;
-const tensors = new Map(); // layer name -> ONNX tensor name
-const pendingPads = new Map(); // ZeroPadding2D output -> pads, folded into the consuming conv
+
+// The part of the Keras topology this converter reads (TensorFlow.js types it as {}).
+interface LayerConfig {
+  name: string;
+  kernel_size: number[];
+  strides: number[];
+  padding: "same" | "valid" | number[][];
+  dilation_rate: number[];
+  use_bias: boolean;
+  activation: string;
+  center: boolean;
+  scale: boolean;
+  axis: number;
+  epsilon: number;
+  negative_slope?: number;
+  threshold?: number;
+  max_value?: number | null;
+  pool_size: number[];
+}
+interface KerasTopology {
+  model_config: {
+    config: {
+      input_layers: [string, number, number][];
+      output_layers: [string, number, number][];
+      layers: { name: string; class_name: string; config: LayerConfig; inbound_nodes: [string, ...unknown[]][][] }[];
+    };
+  };
+}
+const config = (modelTopology as KerasTopology).model_config.config;
+const tensors = new Map<string, string>(); // layer name -> ONNX tensor name
+const pendingPads = new Map<string, number[]>(); // ZeroPadding2D output -> pads, folded into the consuming conv
 
 const inputName = config.input_layers[0][0];
 tensors.set(inputName, node("Transpose", ["input"], { perm: [0, 3, 1, 2] }, "input_nchw"));
@@ -176,11 +211,11 @@ for (const layer of config.layers) {
   const { class_name: type, config: cfg, inbound_nodes: inbound } = layer;
   if (type === "InputLayer") continue;
   const inputs = inbound[0].map(([name]) => name);
-  const x = tensors.get(inputs[0]);
-  let y;
+  const x = tensors.get(inputs[0])!;
+  let y: string;
   switch (type) {
     case "ZeroPadding2D": {
-      const [[t, b], [l, r]] = cfg.padding;
+      const [[t, b], [l, r]] = cfg.padding as number[][];
       pendingPads.set(layer.name, [t, l, b, r]);
       y = x;
       break;
@@ -189,7 +224,7 @@ for (const layer of config.layers) {
     case "DepthwiseConv2D": {
       if (cfg.dilation_rate.some((d) => d !== 1)) throw new Error(`Unsupported dilation in ${layer.name}`);
       const depthwise = type === "DepthwiseConv2D";
-      const k = weights.get(`${layer.name}/${depthwise ? "depthwise_kernel" : "kernel"}`);
+      const k = weights.get(`${layer.name}/${depthwise ? "depthwise_kernel" : "kernel"}`)!;
       const [kh, kw, cin, cout] = k.shape;
       // Keras kernel [kh, kw, in, out|multiplier] -> ONNX [out, in/group, kh, kw]
       const w = weight(`${layer.name}/${depthwise ? "depthwise_kernel" : "kernel"}`, {
@@ -225,7 +260,7 @@ for (const layer of config.layers) {
       break;
     }
     case "Add":
-      y = inputs.map((n) => tensors.get(n)).reduce((a, b) => node("Add", [a, b]));
+      y = inputs.map((n) => tensors.get(n)!).reduce((a, b) => node("Add", [a, b]));
       break;
     case "AveragePooling2D":
       if (cfg.padding !== "valid") throw new Error(`Unsupported pooling padding in ${layer.name}`);
@@ -249,7 +284,7 @@ for (const layer of config.layers) {
 }
 if (weights.size) throw new Error(`Unused weights: ${[...weights.keys()].join(", ")}`);
 
-const output = node("Identity", [tensors.get(config.output_layers[0][0])], {}, "probabilities");
+const output = node("Identity", [tensors.get(config.output_layers[0][0])!], {}, "probabilities");
 
 const graph = Buffer.concat([
   ...nodes.map((n) => msg(1, [n])),
@@ -260,7 +295,7 @@ const graph = Buffer.concat([
 ]);
 const model = Buffer.concat([
   int(1, 8), // IR version
-  str(2, "openinary/nsfw-api scripts/prepare-nsfw.js"),
+  str(2, "openinary/nsfw-api scripts/prepare-nsfw.ts"),
   str(6, "nsfwjs 4.4.0 MobileNetV2 (MIT, github.com/infinitered/nsfwjs), converted to ONNX"),
   msg(7, [graph]),
   msg(8, [str(1, ""), int(2, 13)]), // opset 13

@@ -1,28 +1,28 @@
 // Smoke test against a running instance (local, Docker or Railway).
-//   node scripts/smoke.js https://your-app.up.railway.app
-//   API_KEY=... node scripts/smoke.js http://localhost:8080
+//   node scripts/smoke.ts https://your-app.up.railway.app
+//   API_KEY=... node scripts/smoke.ts http://localhost:8080
 import sharp from "sharp";
 
 const base = (process.argv[2] || process.env.BASE_URL || "http://localhost:8080").replace(/\/$/, "");
 const apiKey = process.env.API_KEY || "";
-const auth = apiKey ? { authorization: `Bearer ${apiKey}` } : {};
+const auth: Record<string, string> = apiKey ? { authorization: `Bearer ${apiKey}` } : {};
 
 let failed = 0;
-async function check(name, fn) {
+async function check(name: string, fn: () => Promise<string | void>) {
   try {
     const detail = await fn();
     console.log(`✓ ${name}${detail ? `  ${detail}` : ""}`);
   } catch (err) {
     failed++;
-    console.log(`✗ ${name}  ${err.message}`);
+    console.log(`✗ ${name}  ${(err as Error).message}`);
   }
 }
-function expectStatus(res, status) {
+function expectStatus(res: Response, status: number) {
   if (res.status !== status) throw new Error(`expected ${status}, got ${res.status}`);
 }
 
 const image = await sharp({ create: { width: 800, height: 600, channels: 3, background: "#4a90d9" } }).jpeg().toBuffer();
-const form = (buf) => {
+const form = (buf: Buffer) => {
   const f = new FormData();
   f.append("image", new Blob([buf], { type: "image/jpeg" }), "smoke.jpg");
   return f;
@@ -30,18 +30,19 @@ const form = (buf) => {
 
 console.log(`Smoke testing ${base}\n`);
 
-let health;
+type Health = { model: string; authRequired: boolean };
+let health: Health | undefined;
 await check("GET /health is ready", async () => {
   const res = await fetch(`${base}/health`);
   expectStatus(res, 200);
-  health = await res.json();
+  health = (await res.json()) as Health;
   return `model=${health.model} auth=${health.authRequired}`;
 });
 
 await check("POST /classify (multipart)", async () => {
   const res = await fetch(`${base}/classify`, { method: "POST", body: form(image), headers: auth });
   expectStatus(res, 200);
-  const body = await res.json();
+  const body = (await res.json()) as { nsfw: boolean; score: number; top: { className: string }; timeMs: number };
   return `nsfw=${body.nsfw} score=${body.score} top=${body.top.className} ${body.timeMs}ms`;
 });
 

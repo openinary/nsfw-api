@@ -101,7 +101,7 @@ Browser page to try the API by hand. Turn it off with `ENABLE_PLAYGROUND=false`.
 
 ## CLIP categories (prototype)
 
-Each image also goes through [MobileCLIP-S0](https://huggingface.co/Xenova/mobileclip_s0) (Apple, a CLIP model built for phones), which compares it with text descriptions listed in [`src/clip-categories.js`](src/clip-categories.js): a few prompts per category (`weapon`, `gore`, `drugs`) and ~37 "other" prompts that are never flagged: everyday scenes, look-alikes (toy guns, kitchen knives, ketchup, medicine) and people/bodies, which nsfwjs judges instead. Without the people/bodies prompts, suggestive photos scored up to 39% gore and 27% drugs (measured with the previous model, CLIP ViT-B/32). A category's score is the share of CLIP's probability that goes to its prompts.
+Each image also goes through [MobileCLIP-S0](https://huggingface.co/Xenova/mobileclip_s0) (Apple, a CLIP model built for phones), which compares it with text descriptions listed in [`src/clip-categories.ts`](src/clip-categories.ts): a few prompts per category (`weapon`, `gore`, `drugs`) and ~37 "other" prompts that are never flagged: everyday scenes, look-alikes (toy guns, kitchen knives, ketchup, medicine) and people/bodies, which nsfwjs judges instead. Without the people/bodies prompts, suggestive photos scored up to 39% gore and 27% drugs (measured with the previous model, CLIP ViT-B/32). A category's score is the share of CLIP's probability that goes to its prompts.
 
 ```json
 "safe": false,
@@ -118,7 +118,7 @@ Each image also goes through [MobileCLIP-S0](https://huggingface.co/Xenova/mobil
 | `CLIP_THRESHOLD` | `0.5` | Score above which a category is flagged. Not calibrated yet. |
 | `CLIP_THREADS` | `1` | ONNX Runtime threads per image. Set to the instance's vCPU count. |
 
-To add or reword a category, edit `src/clip-categories.js` and rebuild: prompts are turned into embeddings at build time (`npm run prepare-models`), so the 170 MB text model never ships.
+To add or reword a category, edit `src/clip-categories.ts` and rebuild: prompts are turned into embeddings at build time (`npm run prepare-models`), so the 170 MB text model never ships.
 
 Known limits: zero-shot CLIP confuses look-alikes (two white lines on black score ~74% "drugs" with MobileCLIP-S0, ~43% with ViT-B/32), misses small objects in busy scenes, and has never been evaluated on a labelled set here: 7 test images are not a benchmark.
 
@@ -143,7 +143,7 @@ The last three columns give the same verdicts on the test images. Switching to O
 On Railway, an idle service mostly pays for its RAM. If the API is called rarely, turn on **App Sleeping** (service *Settings*, or `"sleepApplication": true` under `deploy` in `railway.json`): the service stops after ~10 minutes without traffic and the next request wakes it, the request waits for the container to start and the models to load (~0.75 s) instead of failing.
 
 Why it is built this way:
-- **One runtime**: nsfwjs's MobileNetV2 is converted to ONNX at build time ([`scripts/prepare-nsfw.js`](scripts/prepare-nsfw.js)), keeping its uint8 weights (2.8 MB) and its exact preprocessing. TensorFlow.js and its WASM heap are gone: the nudity pass takes ~6 ms instead of ~47 ms, and its scores match nsfwjs's to ~1e-6 (checked by `test/model.test.js`).
+- **One runtime**: nsfwjs's MobileNetV2 is converted to ONNX at build time ([`scripts/prepare-nsfw.ts`](scripts/prepare-nsfw.ts)), keeping its uint8 weights (2.8 MB) and its exact preprocessing. TensorFlow.js and its WASM heap are gone: the nudity pass takes ~6 ms instead of ~47 ms, and its scores match nsfwjs's to ~1e-6 (checked by `test/model.test.ts`).
 - **MobileCLIP-S0 fp32 (46 MB)** instead of CLIP ViT-B/32 q8 (89 MB): same speed on 1 vCPU, −27 MB compressed image, −30 MB RAM idle. `CLIP_VARIANT` (build arg) can pick `fp16` instead: 23 MB file (about −21 MB compressed), same verdicts, ~5% slower and ~10 MB more RAM, since ONNX Runtime converts it to float32 on CPU. MobileCLIP's int8 export (12 MB) is not offered: it missed both the weapon and the drugs pictures.
 - **glibc malloc tuning** (`MALLOC_ARENA_MAX=2`, `MALLOC_TRIM_THRESHOLD_` and `MALLOC_MMAP_THRESHOLD_` at 128 KB): freed buffers go back to the OS. Without them, RSS settled anywhere between 254 and 301 MB from one run to the next; with them, a stable ~231 MB in the same benchmark, at no measurable latency cost.
 - **Measured and rejected**: `--jitless` (the server does not start), fewer V8 or libuv threads (no difference beyond noise), turning off ONNX Runtime's memory arena (more RAM, not less), turning off weight prepacking (same RAM once malloc is tuned, +9% latency), storing the nudity model in float32 (+1 MB compressed, same RAM), decoding the image once for both models (preprocessing is ~3 ms).
@@ -180,13 +180,14 @@ The same smoke test works against the deployed URL once it is on Railway.
 
 ## Development
 
-Requires Node 22.12+.
+Requires Node 22.18+, which runs the TypeScript sources directly (type stripping): no compile step for `dev`, the scripts or the tests. `tsc` only type-checks, and esbuild bundles the server into `dist/` for production.
 
 ```bash
 npm install
 npm run prepare-models  # converts the nudity model, downloads CLIP, embeds the prompts (into models/)
 npm run dev             # from source, http://localhost:8080
-npm test                # unit, real-model and production-bundle tests
+npm run typecheck       # tsc, no emit
+npm test                # type-check, then unit, real-model and production-bundle tests
 npm run build           # bundle into dist/
 npm start               # run dist/
 ```

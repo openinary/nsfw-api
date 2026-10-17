@@ -3,18 +3,18 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import sharp from "sharp";
 import { beforeAll, describe, expect, it } from "vitest";
-import { ImageDecodeError } from "../src/classifier.js";
-import { createClipClassifier } from "../src/clip.js";
-import { makeImage } from "./helpers.js";
+import { ImageDecodeError } from "../src/classifier.ts";
+import { createClipClassifier } from "../src/clip.ts";
+import { makeImage } from "./helpers.ts";
 
 // Needs the build-time artefacts: run `npm run prepare-models` once.
 const ready = existsSync("models/clip/prompts.json") && existsSync("models/clip/vision.onnx");
 
-const svg = (body) =>
+const svg = (body: string) =>
   sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480">${body}</svg>`)).jpeg().toBuffer();
 
 describe.skipIf(!ready)("CLIP categories (real model)", () => {
-  let clip;
+  let clip: Awaited<ReturnType<typeof createClipClassifier>>;
   beforeAll(async () => {
     clip = await createClipClassifier({ categories: ["weapon", "gore", "drugs"] });
   }, 60_000);

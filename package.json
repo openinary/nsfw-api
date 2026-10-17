@@ -6,15 +6,16 @@
   "main": "dist/server.js",
   "license": "MIT",
   "engines": {
-    "node": "^22.12.0"
+    "node": "^22.18.0"
   },
   "scripts": {
-    "prepare-models": "node scripts/prepare-nsfw.js && node scripts/prepare-clip.js",
-    "dev": "node --watch src/server.js",
-    "build": "node build.js",
+    "prepare-models": "node scripts/prepare-nsfw.ts && node scripts/prepare-clip.ts",
+    "dev": "node --watch src/server.ts",
+    "build": "node build.ts",
     "start": "node dist/server.js",
-    "test": "vitest run",
-    "smoke": "node scripts/smoke.js"
+    "typecheck": "tsc",
+    "test": "tsc && vitest run",
+    "smoke": "node scripts/smoke.ts"
   },
   "dependencies": {
     "onnxruntime-node": "1.30.0",
@@ -23,9 +24,11 @@
   "devDependencies": {
     "@hono/node-server": "2.1.5",
     "@huggingface/transformers": "4.3.1",
+    "@types/node": "22.20.5",
     "esbuild": "0.28.2",
     "hono": "4.13.13",
     "nsfwjs": "4.4.0",
+    "typescript": "7.0.2",
     "vitest": "5.0.5"
   }
 }

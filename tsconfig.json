@@ -1,0 +1,20 @@
+{
+  // Type-check only: Node runs the .ts files directly (type stripping) and
+  // esbuild bundles the server, so tsc never emits anything.
+  "compilerOptions": {
+    "target": "es2024",
+    "lib": ["es2024"],
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "types": ["node"],
+    "noEmit": true,
+    // What Node's type stripping needs: explicit .ts imports, no enums or
+    // namespaces, and `import type` for anything that is only a type.
+    "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "strict": true,
+    "skipLibCheck": true
+  },
+  "include": ["src", "scripts", "test", "build.ts", "vitest.config.ts"]
+}

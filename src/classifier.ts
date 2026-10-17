@@ -1,7 +1,7 @@
 import path from "node:path";
 import sharp from "sharp";
-import { CLASSES } from "./config.js";
-import { createSession, loadOrt } from "./ort.js";
+import { CLASSES, type ClassName } from "./config.ts";
+import { createSession, loadOrt, type SessionOptions } from "./ort.ts";
 
 // One libvips thread per image: inputs are shrunk to a few hundred pixels, so
 // extra threads only add overhead (parallelism comes from concurrent requests).
@@ -13,17 +13,23 @@ sharp.cache(false);
 export const MODEL_NAME = "MobileNetV2";
 const SIZE = 224;
 
+export type Predictions = Record<ClassName, number>;
+
+export interface Classifier {
+  name: string;
+  classify(buffer: Buffer): Promise<Predictions>;
+}
+
 export class ImageDecodeError extends Error {
-  constructor(cause) {
-    super("Unsupported or corrupt image");
-    this.cause = cause;
+  constructor(cause?: unknown) {
+    super("Unsupported or corrupt image", { cause });
   }
 }
 
 // Decodes any format sharp understands (JPEG, PNG, WebP, AVIF, GIF, TIFF, SVG...),
 // applies EXIF rotation, flattens transparency onto white and resizes to the
 // model's input size, the same stretch nsfwjs would apply itself.
-export async function preprocess(buffer, size) {
+export async function preprocess(buffer: Buffer, size: number) {
   try {
     const { data, info } = await sharp(buffer, { failOn: "error", limitInputPixels: 100_000_000 })
       .rotate()
@@ -39,22 +45,24 @@ export async function preprocess(buffer, size) {
 }
 
 /**
- * nsfwjs's MobileNetV2, converted to ONNX at build time (scripts/prepare-nsfw.js).
+ * nsfwjs's MobileNetV2, converted to ONNX at build time (scripts/prepare-nsfw.ts).
  * Same weights and preprocessing as nsfwjs: scores match it to ~1e-6.
- * @param {object} [opts]
- * @param {string} [opts.modelDir]
- * @param {object} [opts.sessionOptions]  extra ONNX Runtime session options
+ * @param opts.sessionOptions  extra ONNX Runtime session options
  */
-export async function createClassifier({ modelDir = "models/nsfw", sessionOptions = {} } = {}) {
+export async function createClassifier({
+  modelDir = "models/nsfw",
+  sessionOptions = {},
+}: { modelDir?: string; sessionOptions?: SessionOptions } = {}) {
   const { Tensor } = await loadOrt();
   const session = await createSession(path.join(modelDir, "mobilenet_v2.onnx"), sessionOptions);
 
-  async function classify(buffer) {
+  async function classify(buffer: Buffer): Promise<Predictions> {
     const { data } = await preprocess(buffer, SIZE);
     const input = new Float32Array(data.length);
     for (let i = 0; i < data.length; i++) input[i] = data[i] / 255; // NHWC, 0..1, as nsfwjs
     const { probabilities } = await session.run({ input: new Tensor("float32", input, [1, SIZE, SIZE, 3]) });
-    return Object.fromEntries(CLASSES.map((name, i) => [name, probabilities.data[i]]));
+    const scores = probabilities.data as Float32Array;
+    return Object.fromEntries(CLASSES.map((name, i) => [name, scores[i]])) as Predictions;
   }
 
   // Run one inference on a blank image so the first real request isn't slow.

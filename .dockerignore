@@ -1,0 +1,9 @@
+node_modules
+dist
+models
+.git
+test
+*.md
+.env
+*.log
+vitest.config.js

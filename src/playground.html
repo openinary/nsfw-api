@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NSFW Detection API</title>
+<style>
+  :root {
+    --bg:#f7f7f5; --card:#fff; --fg:#1b1b1a; --muted:#6b6a66; --line:#e4e3df;
+    --accent:#2f5bd3; --ok:#177245; --ok-bg:#e7f5ed; --bad:#b42318; --bad-bg:#fdecea;
+    --warn:#9a6700; --bar:#1b1b1a; --chip:#eeede9;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg:#121211; --card:#1c1c1b; --fg:#ededea; --muted:#9d9c97; --line:#2e2e2c;
+      --accent:#7d9cf0; --ok:#5cc58f; --ok-bg:#16261d; --bad:#f27b70; --bad-bg:#2c1715;
+      --warn:#e0b04a; --bar:#ededea; --chip:#2a2a28;
+    }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font:15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; background:var(--bg); color:var(--fg); }
+  main { max-width:720px; margin:0 auto; padding:40px 16px 80px; }
+  h1 { font-size:24px; margin:0 0 6px; letter-spacing:-0.01em; }
+  h2 { font-size:16px; margin:0 0 4px; display:flex; align-items:center; gap:10px; }
+  .lead { color:var(--muted); margin:0 0 24px; max-width:60ch; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:20px; margin-bottom:16px; }
+  .step { width:24px; height:24px; border-radius:50%; background:var(--fg); color:var(--bg); font-size:13px; display:inline-grid; place-items:center; flex:none; }
+  .hint { color:var(--muted); font-size:14px; margin:0 0 12px; }
+  code { font:13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background:var(--chip); padding:1px 5px; border-radius:4px; }
+
+  .status { display:flex; flex-wrap:wrap; gap:6px 20px; align-items:center; font-size:14px; }
+  .status .dot { width:9px; height:9px; border-radius:50%; background:var(--muted); display:inline-block; margin-right:6px; }
+  .status .dot.ok { background:var(--ok); } .status .dot.bad { background:var(--bad); } .status .dot.wait { background:var(--warn); }
+  .status strong { font-weight:600; }
+  .status .meta { color:var(--muted); }
+
+  input[type=password], input[type=text] { width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--fg); font:inherit; }
+  button { font:inherit; cursor:pointer; border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--fg); padding:8px 14px; }
+  button:hover { border-color:var(--muted); }
+  .link { border:0; background:none; padding:0; color:var(--accent); text-decoration:underline; text-underline-offset:2px; }
+
+  .drop { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px; min-height:170px; border:2px dashed var(--line); border-radius:10px; cursor:pointer; padding:16px; text-align:center; color:var(--muted); transition:border-color .15s; }
+  .drop:hover, .drop.over { border-color:var(--accent); }
+  .drop strong { color:var(--fg); font-weight:600; }
+  .drop img { max-width:100%; max-height:280px; border-radius:6px; }
+  input[type=file] { display:none; }
+  .below-drop { margin-top:10px; font-size:14px; color:var(--muted); }
+
+  .verdict { border-radius:10px; padding:14px 16px; margin-bottom:16px; }
+  .verdict.ok { background:var(--ok-bg); } .verdict.bad { background:var(--bad-bg); }
+  .verdict .big { font-size:22px; font-weight:700; }
+  .verdict.ok .big { color:var(--ok); } .verdict.bad .big { color:var(--bad); }
+  .verdict p { margin:4px 0 0; }
+
+  .slider { display:grid; grid-template-columns:1fr auto; gap:4px 12px; align-items:center; margin-bottom:20px; }
+  .slider label { font-weight:600; font-size:14px; }
+  .slider output { font-variant-numeric:tabular-nums; font-weight:600; }
+  .slider input { grid-column:1 / -1; width:100%; accent-color:var(--accent); }
+  .slider small { grid-column:1 / -1; color:var(--muted); }
+
+  .cls { display:grid; grid-template-columns:minmax(0,1fr) 120px 56px; gap:2px 12px; align-items:center; padding:8px 0; border-top:1px solid var(--line); }
+  .cls .name { font-weight:600; }
+  .cls .chip { font-size:11px; font-weight:500; background:var(--chip); color:var(--muted); border-radius:99px; padding:1px 8px; margin-left:6px; white-space:nowrap; }
+  .cls .desc { grid-column:1; font-size:13px; color:var(--muted); }
+  .cls .track { grid-column:2; grid-row:1 / span 2; height:8px; background:var(--chip); border-radius:4px; overflow:hidden; }
+  .cls .fill { height:100%; background:var(--bar); }
+  .cls .num { grid-column:3; grid-row:1 / span 2; text-align:right; font-variant-numeric:tabular-nums; }
+  .foot { color:var(--muted); font-size:13px; margin-top:12px; }
+  h3.sub { font-size:13px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:20px 0 4px; font-weight:600; }
+  .cls .chip.bad { background:var(--bad-bg); color:var(--bad); }
+
+  pre { background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:12px; overflow:auto; font:12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; margin:8px 0 0; white-space:pre; }
+  details summary { cursor:pointer; color:var(--muted); font-size:14px; margin-top:12px; }
+  .row { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-top:12px; }
+  .err { background:var(--bad-bg); color:var(--bad); border-radius:8px; padding:12px 14px; }
+  [hidden] { display:none !important; }
+  @media (max-width:520px) { .cls { grid-template-columns:minmax(0,1fr) 64px 48px; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>NSFW Detection API</h1>
+  <p class="lead">This server looks at an image and tells you whether it is safe for work. Use this page to try it by hand before calling it from your app. Images are analysed in memory and never stored.</p>
+
+  <section class="card" aria-live="polite">
+    <div class="status" id="status"><span><span class="dot wait"></span><strong>Connecting…</strong></span></div>
+  </section>
+
+  <section class="card" id="key-card" hidden>
+    <h2><span class="step">1</span>Enter your API key</h2>
+    <p class="hint">This server is protected. Paste the value of its <code>API_KEY</code> variable (on Railway: your service → <em>Variables</em>). It stays in this browser.</p>
+    <input id="key" type="password" placeholder="API key" autocomplete="off" spellcheck="false">
+  </section>
+
+  <section class="card">
+    <h2><span class="step" id="n-pick">1</span>Pick an image</h2>
+    <p class="hint">Use your own pictures, including ones you expect to be flagged, to see how the model behaves on your content.</p>
+    <label class="drop" id="drop">
+      <span id="drop-hint"><strong>Drop an image here</strong> or click to choose<br><span id="formats">JPEG, PNG, WebP, AVIF, GIF</span></span>
+      <img id="preview" alt="Image being analysed" hidden>
+      <input type="file" id="file" accept="image/*">
+    </label>
+    <div class="below-drop">No image at hand? <button class="link" id="sample">Use a generated test picture</button> (a simple drawn landscape, expect “Safe”).</div>
+  </section>
+
+  <section class="card" id="result-card" hidden aria-live="polite">
+    <h2>Result</h2>
+    <div id="result"></div>
+  </section>
+
+  <section class="card">
+    <h2>Call it from your code</h2>
+    <p class="hint">The same request this page sends. Replace <code>photo.jpg</code> with a file on your machine. On Windows PowerShell, type <code>curl.exe</code> instead of <code>curl</code>.</p>
+    <pre id="curl"></pre>
+    <div class="row"><span class="hint" style="margin:0">Response fields: <code>nsfw</code> (true/false), <code>score</code>, <code>predictions</code>.</span><button id="copy">Copy</button></div>
+  </section>
+</main>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const store = {
+    get(k) { try { return localStorage.getItem(k) || ""; } catch { return ""; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+  };
+
+  const CLASS_INFO = {
+    Neutral: "Everyday safe photos",
+    Drawing: "Safe drawings and illustrations",
+    Sexy: "Suggestive, not explicit (swimwear, lingerie…)",
+    Porn: "Explicit photos",
+    Hentai: "Explicit drawings or animation",
+  };
+
+  let info = null;     // /health payload
+  let last = null;     // last /classify response
+  const pct = (n) => (n * 100).toFixed(n < 0.001 && n > 0 ? 2 : 1) + "%";
+
+  // ---- server status ----
+  async function refreshStatus() {
+    const el = $("status");
+    try {
+      const res = await fetch("/health");
+      const body = await res.json();
+      if (res.status === 503) {
+        el.innerHTML = '<span><span class="dot wait"></span><strong>Loading the model…</strong></span><span class="meta">usually a few seconds</span>';
+        setTimeout(refreshStatus, 1000);
+        return;
+      }
+      info = body;
+      el.innerHTML = "";
+      const parts = [
+        ['<span class="dot ok"></span><strong>Ready</strong>'],
+        ["Model", body.model],
+        ["Flags images when score >", pct(body.threshold)],
+        ["Counted as NSFW", body.nsfwClasses.join(", ")],
+        ["Max upload", body.maxFileSizeMb + " MB"],
+        ["API key", body.authRequired ? "required" : "not required"],
+        ...(body.clip ? [["Also checks", body.clip.categories.join(", ") + " (flagged above " + pct(body.clip.threshold) + ")"]] : []),
+      ];
+      for (const [label, value] of parts) {
+        const span = document.createElement("span");
+        if (value === undefined) span.innerHTML = label;
+        else { span.className = "meta"; span.textContent = label + ": "; const b = document.createElement("strong"); b.style.color = "var(--fg)"; b.textContent = value; span.append(b); }
+        el.append(span);
+      }
+      $("formats").textContent = "JPEG, PNG, WebP, AVIF, GIF · up to " + body.maxFileSizeMb + " MB";
+      $("key-card").hidden = !body.authRequired;
+      const offset = body.authRequired ? 1 : 0;
+      $("n-pick").textContent = 1 + offset;
+      renderCurl();
+    } catch {
+      el.innerHTML = '<span><span class="dot bad"></span><strong>Server unreachable</strong></span><span class="meta">retrying…</span>';
+      setTimeout(refreshStatus, 2000);
+    }
+  }
+
+  // ---- API key ----
+  $("key").value = store.get("nsfw-api-key");
+  $("key").addEventListener("input", (e) => store.set("nsfw-api-key", e.target.value));
+
+  // ---- picking an image ----
+  const drop = $("drop");
+  drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
+  drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+  drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); if (e.dataTransfer.files[0]) classify(e.dataTransfer.files[0]); });
+  $("file").addEventListener("change", (e) => { if (e.target.files[0]) classify(e.target.files[0]); e.target.value = ""; });
+
+  $("sample").addEventListener("click", async () => {
+    const c = document.createElement("canvas"); c.width = 800; c.height = 520;
+    const g = c.getContext("2d");
+    const sky = g.createLinearGradient(0, 0, 0, 520); sky.addColorStop(0, "#7fb2e5"); sky.addColorStop(1, "#e9f2fb");
+    g.fillStyle = sky; g.fillRect(0, 0, 800, 520);
+    g.fillStyle = "#f4c542"; g.beginPath(); g.arc(640, 110, 48, 0, Math.PI * 2); g.fill();
+    g.fillStyle = "#8aa7b8"; g.beginPath(); g.moveTo(0, 360); g.lineTo(220, 170); g.lineTo(420, 360); g.fill();
+    g.fillStyle = "#4b7f3a"; g.beginPath(); g.moveTo(0, 380); g.quadraticCurveTo(260, 290, 500, 360); g.quadraticCurveTo(660, 400, 800, 340); g.lineTo(800, 520); g.lineTo(0, 520); g.fill();
+    const blob = await new Promise((r) => c.toBlob(r, "image/jpeg", 0.9));
+    classify(new File([blob], "test-landscape.jpg", { type: "image/jpeg" }));
+  });
+
+  // ---- classify ----
+  const ERRORS = {
+    400: "The server didn't receive an image.",
+    401: "Missing or wrong API key. Check the key in step 1.",
+    413: "This image is larger than the server accepts.",
+    415: "This file isn't an image the server can read.",
+    429: "The server is busy. Try again in a second.",
+    503: "The model is still loading. Try again in a few seconds.",
+  };
+
+  async function classify(file) {
+    $("preview").src = URL.createObjectURL(file);
+    $("preview").hidden = false;
+    $("drop-hint").hidden = true;
+    $("result-card").hidden = false;
+    const out = $("result");
+    out.innerHTML = '<p class="hint">Analysing…</p>';
+
+    const body = new FormData();
+    body.append("image", file);
+    const headers = {};
+    if ($("key").value) headers.Authorization = "Bearer " + $("key").value;
+
+    try {
+      const res = await fetch("/classify", { method: "POST", body, headers });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        out.innerHTML = '<div class="err"></div>';
+        out.firstChild.textContent = (ERRORS[res.status] || "Something went wrong.") + " (HTTP " + res.status + (json.error ? ": " + json.error : "") + ")";
+        return;
+      }
+      last = json;
+      renderResult();
+    } catch (err) {
+      out.innerHTML = '<div class="err"></div>';
+      out.firstChild.textContent = "Couldn't reach the server: " + err.message;
+    }
+  }
+
+  const counted = () => info?.nsfwClasses || ["Porn", "Hentai", "Sexy"];
+
+  function renderVerdict(threshold) {
+    const r = last;
+    const flagged = r.score > threshold;
+    const other = Object.entries(r.categories || {}).filter(([, c]) => c.flagged);
+    const reasons = [...(flagged ? ["nudity"] : []), ...other.map(([name]) => name)];
+    const box = $("result").querySelector(".verdict");
+    box.className = "verdict " + (reasons.length ? "bad" : "ok");
+    box.querySelector(".big").textContent = reasons.length ? "Not safe (" + reasons.join(", ") + ")" : "Safe";
+    box.querySelector(".why").textContent =
+      `Nudity score ${pct(r.score)} is ${flagged ? "above" : "below"} the ${pct(threshold)} threshold. ` +
+      (r.categories
+        ? other.length
+          ? `CLIP also flagged: ${other.map(([n, c]) => `${n} ${pct(c.score)}`).join(", ")}. `
+          : "No weapon, gore or drugs detected. "
+        : "") +
+      `Your app would ${reasons.length ? "block" : "allow"} this image.`;
+    $("t-out").textContent = pct(threshold);
+  }
+
+  function renderResult() {
+    const r = last;
+    const out = $("result");
+
+    out.innerHTML = `
+      <div class="verdict">
+        <div class="big"></div>
+        <p class="why"></p>
+      </div>
+      <div class="slider">
+        <label for="t">Try another threshold</label><output id="t-out"></output>
+        <input id="t" type="range" min="0" max="1" step="0.01">
+        <small>Lower is stricter. This only changes the verdict on this page; the server uses ${pct(r.threshold)} unless a request adds <code>?threshold=</code>.</small>
+      </div>
+      <h3 class="sub">Nudity (nsfwjs)</h3>
+      <div class="classes"></div>
+      <div class="risks-wrap" hidden><h3 class="sub">Weapons, gore, drugs (CLIP)</h3><div class="risks"></div></div>
+      <div class="foot"></div>
+      <details><summary>Raw JSON response</summary><pre></pre></details>`;
+
+    const slider = $("t");
+    slider.value = r.threshold;
+    slider.addEventListener("input", () => renderVerdict(Number(slider.value)));
+    renderVerdict(r.threshold);
+
+    const list = out.querySelector(".classes");
+    for (const [name, p] of Object.entries(r.predictions).sort((a, b) => b[1] - a[1])) {
+      const row = document.createElement("div");
+      row.className = "cls";
+      row.innerHTML = '<div><span class="name"></span></div><div class="track"><div class="fill"></div></div><div class="num"></div><div class="desc"></div>';
+      row.querySelector(".name").textContent = name;
+      if (counted().includes(name)) {
+        const chip = document.createElement("span");
+        chip.className = "chip";
+        chip.textContent = "counts toward score";
+        row.firstChild.append(chip);
+      }
+      row.querySelector(".desc").textContent = CLASS_INFO[name] || "";
+      row.querySelector(".fill").style.width = (p * 100).toFixed(1) + "%";
+      row.querySelector(".num").textContent = pct(p);
+      list.append(row);
+    }
+
+    if (r.categories) {
+      out.querySelector(".risks-wrap").hidden = false;
+      const risks = out.querySelector(".risks");
+      for (const [name, c] of Object.entries(r.categories).sort((a, b) => b[1].score - a[1].score)) {
+        const row = document.createElement("div");
+        row.className = "cls";
+        row.innerHTML = '<div><span class="name"></span></div><div class="track"><div class="fill"></div></div><div class="num"></div><div class="desc"></div>';
+        row.querySelector(".name").textContent = name[0].toUpperCase() + name.slice(1);
+        if (c.flagged) {
+          const chip = document.createElement("span");
+          chip.className = "chip bad";
+          chip.textContent = "flagged";
+          row.firstChild.append(chip);
+        }
+        // Below 10% the closest prompt is noise, and reading "a dead body" next to a landscape alarms people.
+        row.querySelector(".desc").textContent = c.score >= 0.1 ? "Closest description: “" + c.match + "”" : "Not detected";
+        row.querySelector(".fill").style.width = (c.score * 100).toFixed(1) + "%";
+        row.querySelector(".num").textContent = pct(c.score);
+        risks.append(row);
+      }
+    }
+
+    out.querySelector(".foot").textContent = `Analysed by ${r.model} in ${r.timeMs} ms. The model only sees a small downscaled copy of the image, so treat borderline scores as “needs a human look”.`;
+    out.querySelector("pre").textContent = JSON.stringify(r, null, 2);
+  }
+
+  // ---- curl snippet ----
+  function renderCurl() {
+    const lines = [`curl -X POST ${location.origin}/classify \\`];
+    if (info?.authRequired) lines.push(`  -H "Authorization: Bearer YOUR_API_KEY" \\`);
+    lines.push(`  -F image=@photo.jpg`);
+    $("curl").textContent = lines.join("\n");
+  }
+  $("copy").addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText($("curl").textContent); $("copy").textContent = "Copied"; }
+    catch { $("copy").textContent = "Select and copy"; }
+    setTimeout(() => ($("copy").textContent = "Copy"), 1500);
+  });
+
+  renderCurl();
+  refreshStatus();
+</script>
+</body>
+</html>

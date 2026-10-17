@@ -4,7 +4,7 @@
 
 Self-hosted image moderation API built on [nsfwjs](https://github.com/infinitered/nsfwjs)'s model, [MobileCLIP](https://github.com/apple/ml-mobileclip) and [Hono](https://hono.dev). Both models run on ONNX Runtime. One Docker image, no external service, no model download at boot.
 
-[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/REPLACE_WITH_TEMPLATE_CODE)
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/0H-cMq?referralCode=imHr5N&utm_medium=integration&utm_source=template&utm_campaign=generic)
 
 - **Nudity** (Drawing, Hentai, Neutral, Porn, Sexy) with nsfwjs's MobileNetV2, plus **weapons, gore and drugs** with CLIP.
 - **Small instances are enough**: ~75 ms per image on 1 vCPU, ~125 MB RAM idle and ~140 MB under load, ~122 MB compressed image, no GPU.

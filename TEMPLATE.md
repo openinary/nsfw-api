@@ -14,20 +14,21 @@ Railway dashboard → **Workspace settings → Templates → New Template**.
 
 **Service**: *Add service → GitHub repo* → `openinary/nsfw-api`, branch `main`.
 
-**Settings → Networking**: enable *Public networking* (HTTP). Railway generates the domain at deploy time.
+**Settings → Networking**: add an *HTTP Proxy* on port `8080`. Railway generates the domain at deploy time.
 
 **Variables** (in the service's *Variables* tab of the template editor):
 
 | Name | Value | Description shown to users |
 | --- | --- | --- |
-| `API_KEY` | `${{secret(32)}}` | Key required on `/classify`. Generated for you; clear it for an open API. |
+| `API_KEY` | `${{secret(32)}}` | Key required on `/classify` (Bearer or x-api-key). Generated for you; clear it for an open API. Marked optional so it can be cleared. |
 | `NSFW_THRESHOLD` | `0.7` | Score above which an image is flagged. |
 | `NSFW_CLASSES` | `Porn,Hentai,Sexy` | Classes counted as NSFW. |
 | `MAX_FILE_SIZE_MB` | `10` | Max upload size. |
 | `CLIP_CATEGORIES` | `weapon,gore,drugs` | Extra categories detected with CLIP. `none` to turn them off. |
 | `CLIP_THRESHOLD` | `0.5` | Score above which a CLIP category is flagged. |
+| `PORT` | `8080` | Port the API listens on. Keep 8080: the public domain points to it. |
 
-Leave `PORT` unset; Railway injects it. Everything else has defaults in the code; see the README for the full list.
+Setting `PORT` explicitly keeps the app and the HTTP proxy on the same port whatever Railway injects. Everything else has defaults in the code; see the README for the full list.
 
 The healthcheck (`/health`, 120 s timeout) and restart policy come from `railway.json`, so there is nothing to configure for them in the template editor.
 

@@ -1,1 +1,4 @@
 * text=auto eol=lf
+# The playground is a single self-contained demo page: keep it out of
+# GitHub's language stats so the repo shows as the TypeScript API it is.
+src/playground.html linguist-detectable=false

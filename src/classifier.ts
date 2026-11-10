@@ -10,7 +10,7 @@ sharp.concurrency(1);
 // default) would only hold memory, never serve a hit.
 sharp.cache(false);
 
-export const MODEL_NAME = "MobileNetV2";
+export const MODEL_NAME = "MobileNetV2Mid";
 const SIZE = 224;
 
 export type Predictions = Record<ClassName, number>;
@@ -45,7 +45,7 @@ export async function preprocess(buffer: Buffer, size: number) {
 }
 
 /**
- * nsfwjs's MobileNetV2, converted to ONNX at build time (scripts/prepare-nsfw.ts).
+ * nsfwjs's MobileNetV2Mid, converted to ONNX at build time (scripts/prepare-nsfw.ts).
  * Same weights and preprocessing as nsfwjs: scores match it to ~1e-6.
  * @param opts.sessionOptions  extra ONNX Runtime session options
  */
@@ -54,7 +54,7 @@ export async function createClassifier({
   sessionOptions = {},
 }: { modelDir?: string; sessionOptions?: SessionOptions } = {}) {
   const { Tensor } = await loadOrt();
-  const session = await createSession(path.join(modelDir, "mobilenet_v2.onnx"), sessionOptions);
+  const session = await createSession(path.join(modelDir, "mobilenet_v2_mid.onnx"), sessionOptions);
 
   async function classify(buffer: Buffer): Promise<Predictions> {
     const { data } = await preprocess(buffer, SIZE);

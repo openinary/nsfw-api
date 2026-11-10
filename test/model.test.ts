@@ -4,7 +4,7 @@ import { createClassifier, ImageDecodeError } from "../src/classifier.ts";
 import { CLASSES } from "../src/config.ts";
 import { makeImage, multipart, testConfig, type ImageFormat } from "./helpers.ts";
 
-// End-to-end through nsfwjs's MobileNetV2 converted to ONNX (needs `npm run prepare-models`).
+// End-to-end through nsfwjs's MobileNetV2Mid converted to ONNX (needs `npm run prepare-models`).
 let classifier: Awaited<ReturnType<typeof createClassifier>>;
 let app: ReturnType<typeof createApp>;
 
@@ -15,7 +15,7 @@ beforeAll(async () => {
 
 const sum = (o: Record<string, number>) => Object.values(o).reduce((a, b) => a + b, 0);
 
-describe(`real model (MobileNetV2)`, () => {
+describe(`real model (MobileNetV2Mid)`, () => {
   it.each<[ImageFormat, object]>([
     ["jpeg", {}],
     ["png", {}],
@@ -40,8 +40,8 @@ describe(`real model (MobileNetV2)`, () => {
   // Reference scores from nsfwjs 4.4.0 itself (TensorFlow.js) on the same images:
   // the ONNX conversion must not move them.
   it.each<[ImageFormat, object, Record<string, number>]>([
-    ["jpeg", {}, { Drawing: 0.903305, Hentai: 0.017312, Neutral: 0.075418, Porn: 0.003189, Sexy: 0.000777 }],
-    ["png", { alpha: true }, { Drawing: 0.784016, Hentai: 0.012766, Neutral: 0.198689, Porn: 0.00366, Sexy: 0.000868 }],
+    ["jpeg", {}, { Drawing: 0.067551, Hentai: 0.024082, Neutral: 0.907238, Porn: 0.000433, Sexy: 0.000696 }],
+    ["png", { alpha: true }, { Drawing: 0.057748, Hentai: 0.024675, Neutral: 0.915825, Porn: 0.00086, Sexy: 0.000891 }],
   ])("matches nsfwjs's own scores on %s %o", async (format, opts, expected) => {
     const scores = await classifier.classify(await makeImage(format, opts));
     for (const name of CLASSES) expect(scores[name]).toBeCloseTo(expected[name], 5);
@@ -57,7 +57,7 @@ describe(`real model (MobileNetV2)`, () => {
     const res = await app.request("/classify", { method: "POST", body: multipart(await makeImage("webp")) });
     expect(res.status).toBe(200);
     const body: any = await res.json();
-    expect(body.model).toBe("MobileNetV2");
+    expect(body.model).toBe("MobileNetV2Mid");
     expect(typeof body.nsfw).toBe("boolean");
     expect(body.score).toBeGreaterThanOrEqual(0);
     expect(body.score).toBeLessThanOrEqual(1);

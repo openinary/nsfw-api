@@ -37,7 +37,7 @@ Response:
     "gore": { "score": 0.001, "match": null, "flagged": false },
     "drugs": { "score": 0.001, "match": null, "flagged": false }
   },
-  "model": "MobileNetV2",
+  "model": "MobileNetV2Mid",
   "timeMs": 76
 }
 ```
@@ -69,7 +69,7 @@ A request that arrives while the models load waits for them (up to 60 s) instead
 
 ### `GET /` (alias `GET /health`)
 
-`200 {"status":"ok","model":"MobileNetV2",...}` once ready, `503` while the models load. Railway's healthcheck uses `/health`.
+`200 {"status":"ok","model":"MobileNetV2Mid",...}` once ready, `503` while the models load. Railway's healthcheck uses `/health`.
 
 ### `GET /playground`
 
@@ -133,7 +133,7 @@ The last three columns give the same verdicts on the test images. Switching to O
 On Railway, an idle service mostly pays for its RAM. If the API is called rarely, turn on **App Sleeping** (service *Settings*, or `"sleepApplication": true` under `deploy` in `railway.json`): the service stops after ~10 minutes without traffic and the next request wakes it, the request waits for the container to start and the models to load (~0.75 s) instead of failing.
 
 Why it is built this way:
-- **One runtime**: nsfwjs's MobileNetV2 is converted to ONNX at build time ([`scripts/prepare-nsfw.ts`](../scripts/prepare-nsfw.ts)), keeping its uint8 weights (2.8 MB) and its exact preprocessing. TensorFlow.js and its WASM heap are gone: the nudity pass takes ~6 ms instead of ~47 ms, and its scores match nsfwjs's to ~1e-6 (checked by `test/model.test.ts`).
+- **One runtime**: nsfwjs's MobileNetV2Mid is converted to ONNX at build time ([`scripts/prepare-nsfw.ts`](../scripts/prepare-nsfw.ts)), keeping its uint8 weights (4.5 MB) and its exact preprocessing. TensorFlow.js and its WASM heap are gone: the nudity pass takes ~6 ms instead of ~47 ms, and its scores match nsfwjs's to ~1e-6 (checked by `test/model.test.ts`).
 - **MobileCLIP-S0 fp32 (46 MB)** instead of CLIP ViT-B/32 q8 (89 MB): same speed on 1 vCPU, −27 MB compressed image, −30 MB RAM idle. `CLIP_VARIANT` (build arg) can pick `fp16` instead: 23 MB file (about −21 MB compressed), same verdicts, ~5% slower and ~10 MB more RAM, since ONNX Runtime converts it to float32 on CPU. MobileCLIP's int8 export (12 MB) is not offered: it missed both the weapon and the drugs pictures.
 - **glibc malloc tuning** (`MALLOC_ARENA_MAX=2`, `MALLOC_TRIM_THRESHOLD_` and `MALLOC_MMAP_THRESHOLD_` at 128 KB): freed buffers go back to the OS. Without them, RSS settled anywhere between 254 and 301 MB from one run to the next; with them, a stable ~231 MB in the same benchmark, at no measurable latency cost.
 - **Measured and rejected**: `--jitless` (the server does not start), fewer V8 or libuv threads (no difference beyond noise), turning off ONNX Runtime's memory arena (more RAM, not less), turning off weight prepacking (same RAM once malloc is tuned, +9% latency), storing the nudity model in float32 (+1 MB compressed, same RAM), decoding the image once for both models (preprocessing is ~3 ms).

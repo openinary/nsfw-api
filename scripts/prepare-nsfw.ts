@@ -1,14 +1,18 @@
-// Build-time step for the nudity model: converts nsfwjs's MobileNetV2 (a Keras
-// model stored in TensorFlow.js format) into an ONNX file, so the server runs
-// both models on ONNX Runtime and TensorFlow.js never ships in the image.
+// Build-time step for the nudity model: converts nsfwjs's MobileNetV2Mid (a
+// TensorFlow.js graph model) into an ONNX file, so the server runs both models
+// on ONNX Runtime and TensorFlow.js never ships in the image.
 //
-// The weights keep nsfwjs's uint8 quantisation (2.6 MB instead of 10.5 MB);
+// Mid rather than nsfwjs's default MobileNetV2: the small one sees skin in any
+// blurry peach/orange picture (a flower background with a text bubble scored
+// 81% Porn, 0.1% with Mid).
+//
+// The weights keep nsfwjs's uint8 quantisation (4.4 MB instead of 17 MB);
 // the graph dequantises them in float64 exactly like TensorFlow.js does
 // (q * scale + min, rounded once to float32), and ONNX Runtime folds that into
 // plain constants when the model loads.
-// Output: models/nsfw/mobilenet_v2.onnx
+// Output: models/nsfw/mobilenet_v2_mid.onnx
 import { mkdir, writeFile } from "node:fs/promises";
-import { MobileNetV2Model } from "nsfwjs/models/mobilenet_v2";
+import { MobileNetV2MidModel } from "nsfwjs/models/mobilenet_v2_mid";
 
 const OUT = "models/nsfw";
 const SIZE = 224;
@@ -38,14 +42,15 @@ const float32 = (field: number, f: number) => {
 };
 
 const DT = { FLOAT: 1, UINT8: 2, INT64: 7, DOUBLE: 11 };
-const ATTR = { FLOAT: 1, INT: 2, INTS: 7 };
+const ATTR = { FLOAT: 1, INT: 2, STRING: 3, INTS: 7 };
 
 const tensor = (name: string, dataType: number, dims: number[], raw: Buffer) =>
   Buffer.concat([...dims.map((d) => int(1, d)), int(2, dataType), str(8, name), bytes(9, raw)]);
 
-type AttrValue = number | number[];
+type AttrValue = number | number[] | string;
 
 function attribute(name: string, value: AttrValue) {
+  if (typeof value === "string") return Buffer.concat([str(1, name), str(4, value), int(20, ATTR.STRING)]);
   if (Array.isArray(value)) return Buffer.concat([str(1, name), ...value.map((v) => int(8, v)), int(20, ATTR.INTS)]);
   if (Number.isInteger(value)) return Buffer.concat([str(1, name), int(3, value), int(20, ATTR.INT)]);
   return Buffer.concat([str(1, name), float32(2, value), int(20, ATTR.FLOAT)]);
@@ -95,9 +100,9 @@ const f32 = (name: string, v: number) => {
 
 // ---------------------------------------------------------------------------
 // Weights: TensorFlow.js manifest + base64 shard bundled in the nsfwjs package.
-const modelJson = await MobileNetV2Model.modelJson();
+const modelJson = await MobileNetV2MidModel.modelJson();
 const { modelTopology, weightsManifest } = modelJson.default ?? modelJson;
-const shards = await Promise.all(MobileNetV2Model.weightBundles.map((load) => load()));
+const shards = await Promise.all(MobileNetV2MidModel.weightBundles.map((load) => load()));
 const blob = Buffer.concat(shards.map((s) => Buffer.from(s.default ?? s, "base64")));
 
 interface Weight {
@@ -149,146 +154,101 @@ function weight(name: string, { perm, reshape }: { perm?: number[]; reshape?: nu
   return node("Cast", [node("Add", [scaled, f64(`${id}_min`, w.q.min!)])], { to: DT.FLOAT }, id);
 }
 
-function activation(x: string, fn: string) {
-  if (fn === "linear") return x;
-  if (fn === "relu") return node("Relu", [x]);
-  if (fn === "softmax") return node("Softmax", [x], { axis: -1 });
-  throw new Error(`Unsupported activation ${fn}`);
-}
-
-// Keras "same" padding is only symmetric for stride 1 and odd kernels, the only case MobileNetV2 uses.
-function convPads(cfg: LayerConfig, extra?: number[]) {
-  const [kh, kw] = cfg.kernel_size;
-  let pads = [0, 0, 0, 0]; // top, left, bottom, right
-  if (cfg.padding === "same") {
-    if (cfg.strides.some((s) => s !== 1) || kh % 2 === 0 || kw % 2 === 0) {
-      throw new Error(`Unsupported "same" padding in ${cfg.name}`);
-    }
-    pads = [(kh - 1) / 2, (kw - 1) / 2, (kh - 1) / 2, (kw - 1) / 2];
-  }
-  if (extra) pads = pads.map((p, i) => p + extra[i]);
-  return [pads[0], pads[1], pads[2], pads[3]];
-}
-
 // ---------------------------------------------------------------------------
-// Keras layers -> ONNX (NCHW inside the graph)
-
-// The part of the Keras topology this converter reads (TensorFlow.js types it as {}).
-interface LayerConfig {
+// TensorFlow ops -> ONNX (NCHW inside the graph). The converter only knows the
+// dozen ops this model uses, and throws on anything else.
+interface TfNode {
   name: string;
-  kernel_size: number[];
-  strides: number[];
-  padding: "same" | "valid" | number[][];
-  dilation_rate: number[];
-  use_bias: boolean;
-  activation: string;
-  center: boolean;
-  scale: boolean;
-  axis: number;
-  epsilon: number;
-  negative_slope?: number;
-  threshold?: number;
-  max_value?: number | null;
-  pool_size: number[];
+  op: string;
+  input?: string[];
+  attr?: Record<string, { s?: string; list?: { i?: string[]; s?: string[] } }>;
 }
-interface KerasTopology {
-  model_config: {
-    config: {
-      input_layers: [string, number, number][];
-      output_layers: [string, number, number][];
-      layers: { name: string; class_name: string; config: LayerConfig; inbound_nodes: [string, ...unknown[]][][] }[];
-    };
-  };
-}
-const config = (modelTopology as KerasTopology).model_config.config;
-const tensors = new Map<string, string>(); // layer name -> ONNX tensor name
-const pendingPads = new Map<string, number[]>(); // ZeroPadding2D output -> pads, folded into the consuming conv
+const b64 = (s?: string) => Buffer.from(s ?? "", "base64").toString();
+const ints = (n: TfNode, name: string) => (n.attr?.[name]?.list?.i ?? []).map(Number);
+const fused = (n: TfNode) => (n.attr?.fused_ops?.list?.s ?? []).map(b64);
 
-const inputName = config.input_layers[0][0];
-tensors.set(inputName, node("Transpose", ["input"], { perm: [0, 3, 1, 2] }, "input_nchw"));
+const tensors = new Map<string, string>(); // TF node name -> ONNX tensor name
+// An input is either another node's output or a Const, whose weight is emitted here.
+const operand = (name: string) => tensors.get(name) ?? weight(name);
+const zero = f32("zero", 0);
+const six = f32("six", 6);
+let output = "";
 
-for (const layer of config.layers) {
-  const { class_name: type, config: cfg, inbound_nodes: inbound } = layer;
-  if (type === "InputLayer") continue;
-  const inputs = inbound[0].map(([name]) => name);
-  const x = tensors.get(inputs[0])!;
+for (const n of (modelTopology as { node: TfNode[] }).node) {
+  const ins = n.input ?? [];
   let y: string;
-  switch (type) {
-    case "ZeroPadding2D": {
-      const [[t, b], [l, r]] = cfg.padding as number[][];
-      pendingPads.set(layer.name, [t, l, b, r]);
-      y = x;
+  switch (n.op) {
+    case "Const":
+      continue; // emitted by the node that consumes it
+    case "Placeholder":
+      y = node("Transpose", ["input"], { perm: [0, 3, 1, 2] }, "input_nchw");
       break;
-    }
-    case "Conv2D":
-    case "DepthwiseConv2D": {
-      if (cfg.dilation_rate.some((d) => d !== 1)) throw new Error(`Unsupported dilation in ${layer.name}`);
-      const depthwise = type === "DepthwiseConv2D";
-      const k = weights.get(`${layer.name}/${depthwise ? "depthwise_kernel" : "kernel"}`)!;
-      const [kh, kw, cin, cout] = k.shape;
-      // Keras kernel [kh, kw, in, out|multiplier] -> ONNX [out, in/group, kh, kw]
-      const w = weight(`${layer.name}/${depthwise ? "depthwise_kernel" : "kernel"}`, {
+    case "Mul":
+    case "Sub":
+    case "AddV2":
+      y = node(n.op === "AddV2" ? "Add" : n.op, ins.map(operand));
+      break;
+    case "_FusedConv2D":
+    case "FusedDepthwiseConv2dNative": {
+      const depthwise = n.op === "FusedDepthwiseConv2dNative";
+      const ops = fused(n);
+      if (
+        b64(n.attr?.data_format?.s) !== "NHWC" ||
+        b64(n.attr?.padding?.s) !== "SAME" ||
+        ints(n, "dilations").some((d) => d !== 1) ||
+        ops[0] !== "BiasAdd" ||
+        ops.slice(1).some((o) => o !== "Relu6") ||
+        ops.length > 2
+      ) {
+        throw new Error(`Unsupported convolution ${n.name}`);
+      }
+      const [kh, kw, cin, cout] = weights.get(ins[1])!.shape;
+      // TF kernel [kh, kw, in, out|multiplier] -> ONNX [out, in/group, kh, kw]
+      const w = weight(ins[1], {
         perm: depthwise ? [2, 3, 0, 1] : [3, 2, 0, 1],
         reshape: depthwise ? [cin * cout, 1, kh, kw] : undefined,
       });
-      const ins = [x, w];
-      if (cfg.use_bias) ins.push(weight(`${layer.name}/bias`));
-      y = node("Conv", ins, {
+      y = node("Conv", [operand(ins[0]), w, weight(ins[2])], {
         kernel_shape: [kh, kw],
-        strides: cfg.strides,
-        pads: convPads(cfg, pendingPads.get(inputs[0])),
+        strides: ints(n, "strides").slice(1, 3),
+        auto_pad: "SAME_UPPER", // TensorFlow's "SAME": the odd pixel goes at the bottom/right
         group: depthwise ? cin : 1,
       });
-      y = activation(y, cfg.activation);
+      if (ops.includes("Relu6")) y = node("Clip", [y, zero, six]);
       break;
     }
-    case "BatchNormalization": {
-      if (!cfg.center || !cfg.scale || ![-1, 3].includes(cfg.axis)) throw new Error(`Unsupported BN ${layer.name}`);
-      y = node(
-        "BatchNormalization",
-        [x, ...["gamma", "beta", "moving_mean", "moving_variance"].map((p) => weight(`${layer.name}/${p}`))],
-        { epsilon: cfg.epsilon },
-      );
+    case "AvgPool":
+      if (b64(n.attr?.padding?.s) !== "VALID") throw new Error(`Unsupported pooling padding in ${n.name}`);
+      y = node("AveragePool", [operand(ins[0])], {
+        kernel_shape: ints(n, "ksize").slice(1, 3),
+        strides: ints(n, "strides").slice(1, 3),
+      });
       break;
-    }
-    case "ReLU": {
-      if (cfg.negative_slope || cfg.threshold) throw new Error(`Unsupported ReLU options in ${layer.name}`);
-      y =
-        cfg.max_value == null
-          ? node("Relu", [x])
-          : node("Clip", [x, f32(`${layer.name}_lo`, 0), f32(`${layer.name}_hi`, cfg.max_value)]);
+    case "Squeeze":
+      // Drops the 1x1 spatial dims: the same as flattening NCHW.
+      if (ints(n, "squeeze_dims").join() !== "1,2") throw new Error(`Unsupported Squeeze ${n.name}`);
+      y = node("Flatten", [operand(ins[0])], { axis: 1 });
       break;
-    }
-    case "Add":
-      y = inputs.map((n) => tensors.get(n)!).reduce((a, b) => node("Add", [a, b]));
+    case "_FusedMatMul":
+      if (fused(n).join() !== "BiasAdd") throw new Error(`Unsupported MatMul ${n.name}`);
+      y = node("Gemm", ins.map(operand));
       break;
-    case "AveragePooling2D":
-      if (cfg.padding !== "valid") throw new Error(`Unsupported pooling padding in ${layer.name}`);
-      y = node("AveragePool", [x], { kernel_shape: cfg.pool_size, strides: cfg.strides });
+    case "Softmax":
+      y = node("Softmax", [operand(ins[0])], { axis: -1 });
       break;
-    case "Flatten":
-      // The feature map is 1x1 here, so NCHW and NHWC flatten to the same order.
-      y = node("Flatten", [x], { axis: 1 });
-      break;
-    case "Dense":
-      y = node("Gemm", [x, weight(`${layer.name}/kernel`), ...(cfg.use_bias ? [weight(`${layer.name}/bias`)] : [])]);
-      y = activation(y, cfg.activation);
-      break;
-    case "Dropout":
-      y = x; // inference: identity
+    case "Identity":
+      y = output = node("Identity", [operand(ins[0])], {}, "probabilities");
       break;
     default:
-      throw new Error(`Unsupported layer ${type} (${layer.name})`);
+      throw new Error(`Unsupported op ${n.op} (${n.name})`);
   }
-  tensors.set(layer.name, y);
+  tensors.set(n.name, y);
 }
 if (weights.size) throw new Error(`Unused weights: ${[...weights.keys()].join(", ")}`);
 
-const output = node("Identity", [tensors.get(config.output_layers[0][0])!], {}, "probabilities");
-
 const graph = Buffer.concat([
   ...nodes.map((n) => msg(1, [n])),
-  str(2, "nsfwjs_mobilenet_v2"),
+  str(2, "nsfwjs_mobilenet_v2_mid"),
   ...initializers.map((t) => msg(5, [t])),
   msg(11, [valueInfo("input", [1, SIZE, SIZE, 3])]),
   msg(12, [valueInfo(output, [1, 5])]),
@@ -296,11 +256,11 @@ const graph = Buffer.concat([
 const model = Buffer.concat([
   int(1, 8), // IR version
   str(2, "openinary/nsfw-api scripts/prepare-nsfw.ts"),
-  str(6, "nsfwjs 4.4.0 MobileNetV2 (MIT, github.com/infinitered/nsfwjs), converted to ONNX"),
+  str(6, "nsfwjs 4.4.0 MobileNetV2Mid (MIT, github.com/infinitered/nsfwjs), converted to ONNX"),
   msg(7, [graph]),
   msg(8, [str(1, ""), int(2, 13)]), // opset 13
 ]);
 
 await mkdir(OUT, { recursive: true });
-await writeFile(`${OUT}/mobilenet_v2.onnx`, model);
-console.log(`Wrote ${OUT}/mobilenet_v2.onnx (${(model.length / 1e6).toFixed(1)} MB, ${nodes.length} nodes)`);
+await writeFile(`${OUT}/mobilenet_v2_mid.onnx`, model);
+console.log(`Wrote ${OUT}/mobilenet_v2_mid.onnx (${(model.length / 1e6).toFixed(1)} MB, ${nodes.length} nodes)`);

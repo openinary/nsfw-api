@@ -50,7 +50,7 @@ describe("production bundle", () => {
 
   it("starts and loads the models", async () => {
     const health = await waitHealthy(server.port);
-    expect(health).toMatchObject({ status: "ok", model: "MobileNetV2" });
+    expect(health).toMatchObject({ status: "ok", model: "MobileNetV2Mid" });
     expect(server.output()).not.toMatch(/failed/i);
   });
 

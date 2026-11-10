@@ -37,5 +37,5 @@ it("starts from source with plain Node", async () => {
     } catch {}
     await new Promise((r) => setTimeout(r, 100));
   }
-  expect(health, output).toMatchObject({ status: "ok", model: "MobileNetV2" });
+  expect(health, output).toMatchObject({ status: "ok", model: "MobileNetV2Mid" });
 }, 30_000);

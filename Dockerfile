@@ -11,7 +11,7 @@ RUN npm ci --no-audit --no-fund
 COPY build.ts ./
 COPY src ./src
 COPY scripts/prepare-nsfw.ts scripts/prepare-clip.ts ./scripts/
-# Nudity: convert nsfwjs's MobileNetV2 (installed as a dev dependency) to ONNX.
+# Nudity: convert nsfwjs's MobileNetV2Mid (installed as a dev dependency) to ONNX.
 RUN node scripts/prepare-nsfw.ts
 # Railway passes service variables as build args.
 # CLIP (MobileCLIP-S0) weights precision: fp32 (default, 46 MB) or fp16 (23 MB, ~5% slower).

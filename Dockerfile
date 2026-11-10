@@ -1,5 +1,5 @@
 # Debian (glibc) because ONNX Runtime's native binaries don't exist for Alpine/musl.
-FROM node:22-bookworm-slim AS build
+FROM node:22.23.4-bookworm-slim AS build
 WORKDIR /app
 # Skip ONNX Runtime's optional CUDA download.
 ENV ONNXRUNTIME_NODE_INSTALL=skip
@@ -48,5 +48,7 @@ EXPOSE 8080
 # --max-semi-space-size=1: caps V8's young generation at 1 MB per semi-space
 # (default 16 MB). Image buffers live outside the JS heap, so this only trims
 # memory V8 would hold on to: −10 to −17 MB at peak, same latency (measured).
+# Already the base image's default; stated so scanners can see it.
+USER nonroot
 ENTRYPOINT ["/usr/local/bin/node", "--max-semi-space-size=1"]
 CMD ["dist/server.js"]

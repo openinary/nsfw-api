@@ -32,13 +32,13 @@ Setting `PORT` explicitly keeps the app and the HTTP proxy on the same port what
 
 The healthcheck (`/health`, 120 s timeout) and restart policy come from `railway.json`, so there is nothing to configure for them in the template editor.
 
-App Sleeping is left off so the first request never waits. For an API called only now and then, it is worth mentioning in the overview: the service then costs almost nothing while idle, and a request that wakes it waits for the models (~0.75 s) instead of failing.
+App Sleeping is left off so the first request never waits. For an API called only now and then, it is worth mentioning in the overview: the service then costs almost nothing while idle, and a request that wakes it waits for the models (~0.7 s) instead of failing.
 
 ## 3. Template listing
 
 **Name**: NSFW API (nudity, weapons, gore, drugs)
 
-**Short description**: Self-hosted image moderation API: nudity, weapons, gore, drugs. No GPU, ~75 ms per image.
+**Short description**: Self-hosted image moderation API: nudity, weapons, gore, drugs. No GPU, ~70 MB of RAM idle.
 
 **Category**: AI/ML
 
@@ -51,9 +51,9 @@ Deploy a private image moderation API in one click.
 - Weapons, gore and drugs with Apple MobileCLIP-S0 (zero-shot, prototype)
 - `POST /classify` with a file and get `{ safe, flags, predictions, categories }` back
 - JPEG, PNG, WebP, AVIF, GIF and more
-- ~75 ms per image on 1 vCPU, ~125 MB RAM idle (~140 MB under load), no GPU
+- Runs on 1 vCPU with ~70 MB RAM idle (~150 MB under load), no GPU
 - Turn on App Sleeping to pay almost nothing while it is idle
-- Send ~512 px thumbnails rather than originals: 2 to 6× less CPU on large photos
+- Send ~512 px thumbnails rather than originals: up to 2× less CPU on large photos
 - API key generated for you; playground at `/playground` to try it in the browser
 - No data stored; images stay in memory for the length of the request
 
@@ -61,7 +61,7 @@ After deploy, open `https://<your-domain>/playground` to try it, or:
 
     curl -H "Authorization: Bearer $API_KEY" -F image=@photo.jpg https://<your-domain>/classify
 
-The models only look at a 224–256 px version of each image, so send a thumbnail (~512 px, at least 256 px on its shortest side) when your app has one: a 4000×3000 WebP takes ~414 ms, its 512 px thumbnail ~69 ms.
+The models only look at a 224–256 px version of each image, so send a thumbnail (~512 px, at least 256 px on its shortest side) when your app has one: a 4000×3000 WebP takes ~207 ms, its 512 px thumbnail ~94 ms.
 ```
 
 ## 4. Before publishing

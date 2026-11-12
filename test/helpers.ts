@@ -1,5 +1,4 @@
 import sharp, { type FormatEnum } from "sharp";
-import { loadConfig, type Config } from "../src/config.ts";
 
 export type ImageFormat = keyof FormatEnum | "avif";
 
@@ -19,12 +18,8 @@ export async function makeImage(format: ImageFormat = "jpeg", { width = 640, hei
   return sharp(data, { raw: { width, height, channels } }).toFormat(format).toBuffer();
 }
 
-export function testConfig(overrides: Partial<Config> = {}): Config {
-  return { ...loadConfig({}), ...overrides };
-}
-
 export function multipart(buffer: Buffer, { field = "image", type = "image/jpeg", name = "photo.jpg" } = {}) {
   const form = new FormData();
-  form.append(field, new Blob([buffer], { type }), name);
+  form.append(field, new Blob([new Uint8Array(buffer)], { type }), name);
   return form;
 }

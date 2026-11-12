@@ -1,6 +1,6 @@
 {
-  // Type-check only: Node runs the .ts files directly (type stripping) and
-  // esbuild bundles the server, so tsc never emits anything.
+  // Type-check only: Node runs the build scripts and the tests directly (type
+  // stripping), so tsc never emits anything. The server itself is Rust (src/).
   "compilerOptions": {
     "target": "es2024",
     "lib": ["es2024"],
@@ -16,5 +16,5 @@
     "strict": true,
     "skipLibCheck": true
   },
-  "include": ["src", "scripts", "test", "build.ts", "vitest.config.ts"]
+  "include": ["scripts", "test", "vitest.config.ts"]
 }

@@ -1,7 +1,7 @@
 // Build-time step for the CLIP module:
 //  1. downloads MobileCLIP-S0's vision model at a pinned revision, in the
 //     precision picked by CLIP_VARIANT (fp32 by default, see VARIANTS), with its license,
-//  2. turns every prompt of src/clip-categories.ts into an embedding with the
+//  2. turns every prompt of scripts/clip-categories.ts into an embedding with the
 //     text model, so the text model never ships in the image.
 // Output: models/clip/vision.onnx, models/clip/prompts.json, models/clip/LICENSE
 import { createWriteStream, existsSync, readFileSync } from "node:fs";
@@ -9,8 +9,7 @@ import { mkdir, rename, writeFile } from "node:fs/promises";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { AutoTokenizer, CLIPTextModelWithProjection, env } from "@huggingface/transformers";
-import type { PromptsFile } from "../src/clip.ts";
-import { CATEGORIES, OTHER } from "../src/clip-categories.ts";
+import { CATEGORIES, OTHER } from "./clip-categories.ts";
 
 // Apple's MobileCLIP-S0 converted to ONNX by Xenova. This revision ships the
 // weights under the Apple Sample Code License of the July 2024 release, copied
@@ -64,12 +63,13 @@ const { text_embeds } = await textModel(inputs);
 const dim = text_embeds.dims[1];
 const data = text_embeds.data as Float32Array;
 
-const prompts: PromptsFile["prompts"] = entries.map((e, i) => {
+const prompts = entries.map((e, i) => {
   const v = Array.from(data.subarray(i * dim, (i + 1) * dim));
   const norm = Math.hypot(...v);
   return { ...e, embedding: v.map((x) => Math.round((x / norm) * 1e6) / 1e6) };
 });
 
-const file: PromptsFile = { model: MODEL, revision: REVISION, variant, dim, prompts };
+// Read by src/models.rs.
+const file = { model: MODEL, revision: REVISION, variant, dim, prompts };
 await writeFile(`${OUT}/prompts.json`, JSON.stringify(file));
 console.log(`Wrote ${OUT}/prompts.json (${Object.keys(CATEGORIES).join(", ")} + ${OTHER.length} other prompts)`);

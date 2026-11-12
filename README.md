@@ -13,8 +13,8 @@
 - detects nudity with [nsfwjs](https://github.com/infinitered/nsfwjs)'s model
 - flags weapons, gore and drugs with Apple's [MobileCLIP](https://github.com/apple/ml-mobileclip)
 - accepts any image format: JPEG, PNG, WebP, AVIF, GIF, TIFF, SVG
-- runs on a small instance: ~75 ms per image on 1 vCPU, ~140 MB of RAM, no GPU
-- ships as a single Docker image, with no external service
+- runs on a small instance: 1 vCPU, ~70 MB of RAM idle (~150 MB under load), no GPU
+- ships as a single 66 MB Docker image (one Rust binary and two models), with no external service
 
 **For the full API, every setting and the benchmarks, see [docs/details.md](docs/details.md).**
 
@@ -75,13 +75,13 @@ curl -X POST https://your-app.up.railway.app/classify \
 
 ## Development
 
-Requires Node 22.18+.
+The server is Rust (stable toolchain). Node 22.18+ is only used to prepare the models and to run the end-to-end tests.
 
 ```bash
 npm install
 npm run prepare-models  # downloads and converts the models
-npm run dev             # http://localhost:8080
-npm test
+npm run dev             # cargo run --release, http://localhost:8080
+npm test                # cargo test, then end-to-end tests on the release binary
 ```
 
 ## Resources

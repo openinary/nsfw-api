@@ -55,15 +55,15 @@ Response:
 
 #### Send a thumbnail, not the original
 
-The models only look at a 224–256 px version of the image, so a ~512 px thumbnail gives the same kind of verdict for a fraction of the work: most of the time spent on a large upload is decoding it. Measured on 1 vCPU:
+The models only look at a 224–256 px version of the image, so a ~512 px thumbnail gives the same kind of verdict for a fraction of the work: most of the time spent on a large upload is decoding it. Measured on 1 vCPU (arm64):
 
 | Upload | 4000×3000 original | 512 px thumbnail |
 | --- | --- | --- |
-| WebP | 414 ms | 69 ms |
-| PNG | 145 ms | 68 ms |
-| JPEG | 112 ms | 63 ms |
+| WebP | 207 ms | 94 ms |
+| PNG | 185 ms | 92 ms |
+| JPEG | 130 ms | 92 ms |
 
-If your app already makes resized versions of its images (an image CDN, a thumbnail pipeline), send one of those: 2 to 6× less CPU per image, less bandwidth, and lower memory peaks. Keep it at least 256 px on its shortest side.
+If your app already makes resized versions of its images (an image CDN, a thumbnail pipeline), send one of those: up to 2× less CPU per image, less bandwidth, and lower memory peaks (a large upload is decoded whole in memory, 3 to 4 bytes per pixel). Keep it at least 256 px on its shortest side.
 
 A request that arrives while the models load waits for them (up to 60 s) instead of failing, so the first request after a cold start, or after Railway wakes a sleeping service, still gets an answer.
 
@@ -91,7 +91,7 @@ Browser page to try the API by hand. Turn it off with `ENABLE_PLAYGROUND=false`.
 
 ## CLIP categories (prototype)
 
-Each image also goes through [MobileCLIP-S0](https://huggingface.co/Xenova/mobileclip_s0) (Apple, a CLIP model built for phones), which compares it with text descriptions listed in [`src/clip-categories.ts`](../src/clip-categories.ts): a few prompts per category (`weapon`, `gore`, `drugs`) and ~37 "other" prompts that are never flagged: everyday scenes, look-alikes (toy guns, kitchen knives, ketchup, medicine) and people/bodies, which nsfwjs judges instead. Without the people/bodies prompts, suggestive photos scored up to 39% gore and 27% drugs (measured with the previous model, CLIP ViT-B/32). A category's score is the share of CLIP's probability that goes to its prompts.
+Each image also goes through [MobileCLIP-S0](https://huggingface.co/Xenova/mobileclip_s0) (Apple, a CLIP model built for phones), which compares it with text descriptions listed in [`scripts/clip-categories.ts`](../scripts/clip-categories.ts): a few prompts per category (`weapon`, `gore`, `drugs`) and ~37 "other" prompts that are never flagged: everyday scenes, look-alikes (toy guns, kitchen knives, ketchup, medicine) and people/bodies, which nsfwjs judges instead. Without the people/bodies prompts, suggestive photos scored up to 39% gore and 27% drugs (measured with the previous model, CLIP ViT-B/32). A category's score is the share of CLIP's probability that goes to its prompts.
 
 ```json
 "safe": false,
@@ -106,9 +106,8 @@ Each image also goes through [MobileCLIP-S0](https://huggingface.co/Xenova/mobil
 | --- | --- | --- |
 | `CLIP_CATEGORIES` | `weapon,gore,drugs` | Categories to check. `none` turns CLIP off (it still ships in the image). |
 | `CLIP_THRESHOLD` | `0.5` | Score above which a category is flagged. Not calibrated yet. |
-| `CLIP_THREADS` | `1` | ONNX Runtime threads per image. Set to the instance's vCPU count. |
 
-To add or reword a category, edit `src/clip-categories.ts` and rebuild: prompts are turned into embeddings at build time (`npm run prepare-models`), so the 170 MB text model never ships.
+To add or reword a category, edit `scripts/clip-categories.ts` and rebuild: prompts are turned into embeddings at build time (`npm run prepare-models`), so the 170 MB text model never ships.
 
 Known limits: zero-shot CLIP confuses look-alikes (two white lines on black score ~74% "drugs" with MobileCLIP-S0, ~43% with ViT-B/32), misses small objects in busy scenes, and has never been evaluated on a labelled set here: 7 test images are not a benchmark.
 
@@ -120,31 +119,47 @@ In August 2025 Apple moved the official MobileCLIP weights ([apple/MobileCLIP-S0
 
 ## Cost
 
-Docker, x86-64, 1 vCPU, the 7 test images, 2 requests at a time:
+Version 2 is a Rust server running the models with [tract](https://github.com/sonos/tract) instead of Node with ONNX Runtime. Both versions measured the same way: Docker, arm64 (Apple Silicon), 1 vCPU, a mix of 7 JPEG, PNG and WebP photos from 512 to 1200 px, 300 requests:
 
-| | nsfwjs only (TensorFlow.js) | + CLIP ViT-B/32, first prototype | + CLIP ViT-B/32 q8, TensorFlow.js | + CLIP ViT-B/32 q8, ONNX only | **+ MobileCLIP-S0 (now)** |
-| --- | --- | --- | --- | --- | --- |
-| Compressed image | ~40 MB | ~254 MB | ~150 MB | ~148 MB | **~122 MB** |
-| RAM, idle → under load | ~110 MB | ~600 MB | ~315 → 332 MB | ~155 → 170 MB | **~125 → 140 MB** |
-| Per image | ~55 ms | ~147 ms | ~116 ms | ~78 ms | **~71 ms** |
+| | v1: Node + ONNX Runtime | **v2: Rust + tract (now)** |
+| --- | --- | --- |
+| Image, compressed (unpacked) | 113 MB (236 MB) | **66 MB (115 MB)** |
+| RAM, idle after start | 128 MiB | **67 MiB** |
+| RAM under load | 175 MiB | **146 MiB** |
+| RAM back idle, 15 s after the load | 172 MiB | **103 MiB** |
+| Per image, 1 request at a time | 120 ms | **93 ms** |
+| Per image, 2 requests at a time (throughput) | 120 ms | **114 ms** |
+| Container start to healthy | 0.59 s | 0.65 s |
 
-The last three columns give the same verdicts on the test images. Switching to ONNX only kept every score identical to 4 decimals; MobileCLIP-S0 changes the CLIP scores (it is a different model) but is more clear-cut: 100% weapon and drugs on the two positive pictures instead of 99% and 89%, and 0.4% weapon on the drawing instead of 12%.
+Scores moved by at most 0.005 between the two versions on 13 test images (the resize is no longer libvips'); verdicts are unchanged. Not measured yet: x86-64 on real hardware. Emulated on the same machine, v2 uses less memory there too (106 → 190 MiB against 257 → 313) and is as fast one request at a time, but its throughput at 2 requests at a time is ~25% lower (390 ms per image against 310). Emulation distorts timings, so measure on your own x86-64 instance before relying on either figure.
 
-On Railway, an idle service mostly pays for its RAM. If the API is called rarely, turn on **App Sleeping** (service *Settings*, or `"sleepApplication": true` under `deploy` in `railway.json`): the service stops after ~10 minutes without traffic and the next request wakes it, the request waits for the container to start and the models to load (~0.75 s) instead of failing.
+On Railway, an idle service mostly pays for its RAM. If the API is called rarely, turn on **App Sleeping** (service *Settings*, or `"sleepApplication": true` under `deploy` in `railway.json`): the service stops after ~10 minutes without traffic and the next request wakes it, the request waits for the container to start and the models to load (~0.7 s) instead of failing.
 
 Why it is built this way:
-- **One runtime**: nsfwjs's MobileNetV2Mid is converted to ONNX at build time ([`scripts/prepare-nsfw.ts`](../scripts/prepare-nsfw.ts)), keeping its uint8 weights (4.5 MB) and its exact preprocessing. TensorFlow.js and its WASM heap are gone: the nudity pass takes ~6 ms instead of ~47 ms, and its scores match nsfwjs's to ~1e-6 (checked by `test/model.test.ts`).
-- **MobileCLIP-S0 fp32 (46 MB)** instead of CLIP ViT-B/32 q8 (89 MB): same speed on 1 vCPU, −27 MB compressed image, −30 MB RAM idle. `CLIP_VARIANT` (build arg) can pick `fp16` instead: 23 MB file (about −21 MB compressed), same verdicts, ~5% slower and ~10 MB more RAM, since ONNX Runtime converts it to float32 on CPU. MobileCLIP's int8 export (12 MB) is not offered: it missed both the weapon and the drugs pictures.
-- **glibc malloc tuning** (`MALLOC_ARENA_MAX=2`, `MALLOC_TRIM_THRESHOLD_` and `MALLOC_MMAP_THRESHOLD_` at 128 KB): freed buffers go back to the OS. Without them, RSS settled anywhere between 254 and 301 MB from one run to the next; with them, a stable ~231 MB in the same benchmark, at no measurable latency cost.
-- **Measured and rejected**: `--jitless` (the server does not start), fewer V8 or libuv threads (no difference beyond noise), turning off ONNX Runtime's memory arena (more RAM, not less), turning off weight prepacking (same RAM once malloc is tuned, +9% latency), storing the nudity model in float32 (+1 MB compressed, same RAM), decoding the image once for both models (preprocessing is ~3 ms).
-- **`node --max-semi-space-size=1`**: caps V8's young generation at 1 MB per semi-space instead of 16 MB. Image buffers live outside the JS heap, so it only trims memory V8 would keep: −10 to −17 MB at peak, same latency.
-- **`sharp.cache(false)`**: every upload is a new image, so libvips' operation cache (up to 50 MB) would only hold memory.
-- **Debian, not Alpine**: ONNX Runtime has no musl build.
-- **Distroless runtime** (`gcr.io/distroless/cc-debian12`): glibc + libstdc++ only, which is all node, sharp and ONNX Runtime link against; plus a stripped node binary (−18 MB).
-- **Telemetry off**: ONNX Runtime 1.30 ships usage telemetry; `ORT_DISABLE_TELEMETRY=1` disables it.
+- **One binary**: the HTTP server (axum), image decoding (the `image` crate, resvg for SVG), resizing (`fast_image_resize`) and inference (tract) are compiled into a single ~25 MB executable. No Node, no ONNX Runtime, no libvips: that is where the image size and the idle memory went.
+- **Models prepared at build time, by Node**: nsfwjs's MobileNetV2Mid is converted to ONNX ([`scripts/prepare-nsfw.ts`](../scripts/prepare-nsfw.ts)), keeping its exact preprocessing, and the CLIP prompts are embedded with transformers.js ([`scripts/prepare-clip.ts`](../scripts/prepare-clip.ts)). Both are npm packages, so that stage stays in Node; nothing of it ships. The nudity scores match nsfwjs's own to 4 decimals (checked by `test/e2e.test.ts`).
+- **MobileCLIP-S0 fp32 (46 MB)** instead of CLIP ViT-B/32 q8 (89 MB). `CLIP_VARIANT` (build arg) can pick `fp16` instead: a 23 MB file, which loads and classifies but has not been benchmarked on tract. MobileCLIP's int8 export (12 MB) is not offered: it missed both the weapon and the drugs pictures.
+- **The image is decoded once** for both models, which then run side by side on two threads.
+- **Memory is handed back when idle**: glibc keeps freed memory in its heap, ~100 MB of scratch space after optimising the models and ~75 MB of tensors after a burst. The server calls `malloc_trim` once the models are loaded and again after 5 quiet seconds. `MALLOC_ARENA_MAX=2` keeps freed tensors reusable across threads (−10 MB under load, same speed).
+- **Measured and rejected**: `MALLOC_TRIM_THRESHOLD_=131072`, which trims on every free. It holds RAM at ~70 → 86 MiB even under load, but costs ~30% of the throughput (157 ms per image instead of 114). Set it on the service if you would rather pay CPU than RAM.
+- **Debian 13, not Alpine**: AVIF is decoded by libdav1d, the one shared library the binary needs, and the Rust bindings want a more recent version than Debian 12 has.
+- **Distroless runtime** (`gcr.io/distroless/cc-debian13`): glibc only, no shell, no package manager, runs as `nonroot`.
 - **Build needs network**: the MobileCLIP vision model, its license and its text model (for the prompts only) are downloaded from Hugging Face at a pinned revision during `docker build`.
 
-What the image is made of (uncompressed): node 107 MB, ONNX Runtime 46 MB, MobileCLIP vision model 46 MB, distroless base ~25 MB, libvips 19 MB, nudity model 3 MB, server bundle 0.1 MB. Docker Desktop shows ~375 MB because it adds the compressed layers (~122 MB, what Railway downloads) to the unpacked copy.
+What the image is made of (uncompressed): MobileCLIP vision model 46 MB, distroless base ~38 MB, server binary 25 MB, nudity model 4.5 MB, libdav1d 0.7 MB.
+
+<details>
+<summary>History: the Node versions (x86-64, 1 vCPU, 7 test images, 2 requests at a time)</summary>
+
+| | nsfwjs only (TensorFlow.js) | + CLIP ViT-B/32, first prototype | + CLIP ViT-B/32 q8, TensorFlow.js | + CLIP ViT-B/32 q8, ONNX only | + MobileCLIP-S0, ONNX Runtime (v1) |
+| --- | --- | --- | --- | --- | --- |
+| Compressed image | ~40 MB | ~254 MB | ~150 MB | ~148 MB | ~122 MB |
+| RAM, idle → under load | ~110 MB | ~600 MB | ~315 → 332 MB | ~155 → 170 MB | ~125 → 140 MB |
+| Per image | ~55 ms | ~147 ms | ~116 ms | ~78 ms | ~71 ms |
+
+These were measured on another machine and another set of images, so they do not compare with the table above.
+
+</details>
 
 ## Testing by hand before deploying
 
@@ -170,20 +185,22 @@ The same smoke test works against the deployed URL once it is on Railway.
 
 ## Development
 
-Requires Node 22.18+, which runs the TypeScript sources directly (type stripping): no compile step for `dev`, the scripts or the tests. `tsc` only type-checks, and esbuild bundles the server into `dist/` for production.
+The server is Rust (`src/`, stable toolchain). Node 22.18+ only prepares the models (`scripts/`, where nsfwjs and transformers.js live) and runs the end-to-end tests; it never ships in the image.
 
 ```bash
 npm install
 npm run prepare-models  # converts the nudity model, downloads CLIP, embeds the prompts (into models/)
-npm run dev             # from source, http://localhost:8080
-npm run typecheck       # tsc, no emit
-npm test                # type-check, then unit, real-model and production-bundle tests
-npm run build           # bundle into dist/
-npm start               # run dist/
+npm run dev             # cargo run --release, http://localhost:8080
+cargo test              # unit tests and the HTTP layer against a stub classifier
+npm test                # cargo test, then end-to-end tests on the release binary with the real models
 ```
+
+AVIF decoding is a cargo feature because it links the system's libdav1d: the Dockerfile turns it on, a plain `cargo build` leaves it out (AVIF uploads then get a 415). To build and test it locally, install `pkg-config` and libdav1d, then run `cargo build --release --features avif` and `TEST_AVIF=1 npx vitest run`.
 
 ## Notes
 
 - The models only see a small downscale of the image (224×224 for nudity, 256×256 for MobileCLIP). It is a moderation aid, not a guarantee: keep a human in the loop for borderline cases.
 - Animated GIFs are classified on their first frame.
+- TIFF: uncompressed, LZW and Deflate RGB or greyscale files are read; JPEG-compressed YCbCr TIFFs get a 415.
+- SVGs are rendered without text and without the images they embed or link to.
 - Nothing is written to disk; images only live in memory for the duration of the request.
